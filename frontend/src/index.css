@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  
+  body {
+    background-color: #0A0A0A;
+    color: #F4F4F5;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Blinking cursor for streaming indicator */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  background-color: #6366F1;
+  margin-left: 3px;
+  vertical-align: middle;
+  animation: blink 0.8s infinite;
+  border-radius: 1px;
+}
+
+/* Markdown prose styling for dark mode */
+.prose-custom {
+  color: #E4E4E7;
+  font-size: 0.9375rem;
+  line-height: 1.625;
+}
+
+.prose-custom p {
+  margin-bottom: 0.75rem;
+}
+
+.prose-custom p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-custom h1, .prose-custom h2, .prose-custom h3, .prose-custom h4 {
+  color: #FFFFFF;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-custom h1 { font-size: 1.35rem; }
+.prose-custom h2 { font-size: 1.2rem; }
+.prose-custom h3 { font-size: 1.05rem; }
+
+.prose-custom ul, .prose-custom ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.prose-custom ul { list-style-type: disc; }
+.prose-custom ol { list-style-type: decimal; }
+
+.prose-custom li {
+  margin-bottom: 0.25rem;
+}
+
+.prose-custom blockquote {
+  border-left: 3px solid #6366F1;
+  padding-left: 0.875rem;
+  color: #A1A1AA;
+  font-style: italic;
+  margin: 0.75rem 0;
+}
+
+.prose-custom hr {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 1.25rem 0;
+}
+
+.prose-custom table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+}
+
+.prose-custom th, .prose-custom td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.4rem 0.75rem;
+  text-align: left;
+}
+
+.prose-custom th {
+  background-color: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+/* Inline code snippet */
+.prose-custom :not(pre) > code {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #E2E8F0;
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(20, 20, 20, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.glass-dropdown {
+  background: rgba(18, 18, 18, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
