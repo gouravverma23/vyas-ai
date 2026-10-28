@@ -364,6 +364,11 @@ export default function App() {
     setMessages((prev) =>
       prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
     );
+
+    // Refresh conversation list to update preview and message count
+    setTimeout(() => {
+      fetchConversations(activeConversationId);
+    }, 400);
   };
 
   // Send message and stream response

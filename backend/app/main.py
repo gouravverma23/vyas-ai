@@ -370,6 +370,33 @@ async def chat(
         yield f"data: {json.dumps(init_event)}\n\n"
 
         assistant_full_text = ""
+        is_persisted = False
+        persisted_assistant_id = None
+
+        async def persist_assistant_response(text: str, is_partial: bool = False):
+            nonlocal is_persisted, persisted_assistant_id
+            clean_text = text.strip()
+            if not is_persisted and clean_text:
+                is_persisted = True
+                try:
+                    persisted_assistant_id = await asyncio.shield(
+                        insert_message(
+                            conversation_id=active_conv_id,
+                            role="assistant",
+                            content=clean_text,
+                            has_image=False,
+                            image_data=None
+                        )
+                    )
+                    logger.info(
+                        f"Persisted {'partial' if is_partial else 'completed'} assistant response "
+                        f"(length={len(clean_text)}, id={persisted_assistant_id}, conv={active_conv_id})"
+                    )
+                    return persisted_assistant_id
+                except Exception as e:
+                    logger.error(f"Failed to persist assistant message to SQLite: {e}")
+                    return None
+            return persisted_assistant_id
 
         try:
             async for chunk in stream_ollama_chat(
@@ -394,9 +421,13 @@ async def chat(
                         assistant_full_text = chunk["full_content"]
                     break
 
-        except asyncio.CancelledError:
-            logger.info("Client disconnected or cancelled the request.")
-            return
+        except (asyncio.CancelledError, GeneratorExit):
+            logger.info(
+                f"Client disconnected or cancelled generation. "
+                f"Saving partial response ({len(assistant_full_text)} chars) to conversation {active_conv_id}."
+            )
+            await persist_assistant_response(assistant_full_text, is_partial=True)
+            raise
         except Exception as e:
             err_type = type(e).__name__
             err_msg = str(e).strip() or err_type
@@ -408,26 +439,15 @@ async def chat(
             yield f"data: {json.dumps(err_event)}\n\n"
             if not assistant_full_text:
                 assistant_full_text = f"An error occurred ({err_type}): {err_msg}"
-
-        # 5. Persist completed assistant response into SQLite
-        assistant_id = None
-        try:
-            if assistant_full_text.strip():
-                assistant_id = await insert_message(
-                    conversation_id=active_conv_id,
-                    role="assistant",
-                    content=assistant_full_text,
-                    has_image=False,
-                    image_data=None
-                )
-        except Exception as e:
-            logger.error(f"Failed to persist assistant message to SQLite: {e}")
+        finally:
+            # Guarantee persistence for any other exit path (normal completion or unhandled error)
+            await persist_assistant_response(assistant_full_text)
 
         # Send final completion event
         final_event = {
             "type": "done",
             "conversation_id": active_conv_id,
-            "assistant_id": assistant_id,
+            "assistant_id": persisted_assistant_id,
             "full_content": assistant_full_text
         }
         yield f"data: {json.dumps(final_event)}\n\n"
