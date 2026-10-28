@@ -3,13 +3,31 @@ import json
 import logging
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel, Field
 
-from app.database import init_db, insert_message, get_recent_history, get_context_turns, clear_all_history
+from app.database import (
+    init_db,
+    insert_message,
+    get_recent_history,
+    get_context_turns,
+    clear_all_history,
+    clear_conversation_history,
+    list_conversations,
+    create_conversation,
+    get_conversation,
+    update_conversation,
+    delete_conversation,
+    touch_conversation,
+    list_groups,
+    create_group,
+    update_group,
+    delete_group,
+)
 from app.ollama_client import stream_ollama_chat, check_ollama_health, get_available_models, DEFAULT_MODEL
 
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +36,7 @@ logger = logging.getLogger("local_ai_backend")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Ensure SQLite database schema & WAL mode are configured
-    logger.info("Initializing SQLite database with WAL mode...")
+    logger.info("Initializing SQLite database with WAL mode and schema...")
     await init_db()
     yield
     # Teardown logic if needed
@@ -26,8 +44,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Local AI Interface API",
-    description="Offline-capable, local-first multimodal chat backend powered by SQLite & Ollama",
-    version="1.0.0",
+    description="Offline-capable, local-first multimodal chat backend with conversation & group management",
+    version="1.1.0",
     lifespan=lifespan
 )
 
@@ -45,6 +63,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Pydantic Request Schemas ---
+
+class CreateConversationRequest(BaseModel):
+    title: Optional[str] = "New Chat"
+    group_id: Optional[str] = None
+
+class UpdateConversationRequest(BaseModel):
+    title: Optional[str] = None
+    group_id: Optional[str] = None
+    clear_group: Optional[bool] = False
+
+class CreateGroupRequest(BaseModel):
+    name: str
+
+class UpdateGroupRequest(BaseModel):
+    name: Optional[str] = None
+    is_expanded: Optional[bool] = None
+
+# --- Status Endpoints ---
 
 @app.get("/health")
 async def health():
@@ -65,14 +103,153 @@ async def list_models():
         "default": DEFAULT_MODEL
     }
 
-@app.get("/history")
-async def get_history(limit: int = 50):
-    """
-    Retrieve the last ordered messages to hydrate chat UI on reload.
-    Returns up to `limit` messages (default 50) in chronological order.
-    """
+# --- Conversation & Group Endpoints ---
+
+@app.get("/conversations")
+async def get_all_conversations():
+    """Retrieve all conversations and groups for the sidebar."""
     try:
-        messages = await get_recent_history(limit=limit)
+        conversations = await list_conversations()
+        groups = await list_groups()
+        return {
+            "conversations": conversations,
+            "groups": groups
+        }
+    except Exception as e:
+        logger.error(f"Error fetching conversations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch conversations: {str(e)}"
+        )
+
+@app.post("/conversations")
+async def create_new_conversation(req: CreateConversationRequest = Body(default_factory=CreateConversationRequest)):
+    """Create a new conversation optionally inside a group."""
+    try:
+        conv = await create_conversation(title=req.title or "New Chat", group_id=req.group_id)
+        return conv
+    except Exception as e:
+        logger.error(f"Error creating conversation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create conversation: {str(e)}"
+        )
+
+@app.get("/conversations/{conversation_id}")
+async def get_single_conversation(conversation_id: str):
+    """Get metadata and messages for a specific conversation."""
+    try:
+        conv = await get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        messages = await get_recent_history(conversation_id=conversation_id, limit=100)
+        return {
+            "conversation": conv,
+            "messages": messages
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve conversation: {str(e)}"
+        )
+
+@app.patch("/conversations/{conversation_id}")
+async def update_single_conversation(conversation_id: str, req: UpdateConversationRequest):
+    """Rename conversation or change its group assignment."""
+    try:
+        updated = await update_conversation(
+            conv_id=conversation_id,
+            title=req.title,
+            group_id=req.group_id,
+            clear_group=bool(req.clear_group)
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update conversation: {str(e)}"
+        )
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_single_conversation(conversation_id: str):
+    """Delete a conversation and its messages."""
+    try:
+        success = await delete_conversation(conversation_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {"status": "success", "deleted_id": conversation_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete conversation: {str(e)}"
+        )
+
+# --- Group Endpoints ---
+
+@app.post("/groups")
+async def create_new_group(req: CreateGroupRequest):
+    """Create a new group for organizing conversations."""
+    try:
+        group = await create_group(name=req.name)
+        return group
+    except Exception as e:
+        logger.error(f"Error creating group: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create group: {str(e)}"
+        )
+
+@app.patch("/groups/{group_id}")
+async def update_single_group(group_id: str, req: UpdateGroupRequest):
+    """Rename or toggle group expansion."""
+    try:
+        group = await update_group(group_id=group_id, name=req.name, is_expanded=req.is_expanded)
+        if not group:
+            raise HTTPException(status_code=404, detail="Group not found")
+        return group
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating group {group_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update group: {str(e)}"
+        )
+
+@app.delete("/groups/{group_id}")
+async def delete_single_group(group_id: str):
+    """Delete a group. Its conversations are safely ungrouped."""
+    try:
+        success = await delete_group(group_id)
+        return {"status": "success", "deleted_group_id": group_id}
+    except Exception as e:
+        logger.error(f"Error deleting group {group_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete group: {str(e)}"
+        )
+
+# --- History Endpoints ---
+
+@app.get("/history")
+async def get_history(
+    conversation_id: Optional[str] = Query(None),
+    limit: int = Query(100)
+):
+    """Retrieve message history, optionally filtered by conversation_id."""
+    try:
+        messages = await get_recent_history(conversation_id=conversation_id, limit=limit)
         return {"messages": messages}
     except Exception as e:
         logger.error(f"Error fetching history: {e}")
@@ -82,11 +259,15 @@ async def get_history(limit: int = 50):
         )
 
 @app.delete("/history")
-async def clear_history():
-    """Clear all chat history from SQLite."""
+async def clear_history(conversation_id: Optional[str] = Query(None)):
+    """Clear chat history: for a specific conversation or all history."""
     try:
-        deleted_count = await clear_all_history()
-        return {"status": "success", "deleted_messages": deleted_count}
+        if conversation_id:
+            deleted_count = await clear_conversation_history(conversation_id)
+            return {"status": "success", "conversation_id": conversation_id, "deleted_messages": deleted_count}
+        else:
+            deleted_count = await clear_all_history()
+            return {"status": "success", "deleted_messages": deleted_count}
     except Exception as e:
         logger.error(f"Error clearing history: {e}")
         raise HTTPException(
@@ -94,20 +275,25 @@ async def clear_history():
             detail=f"Failed to clear history: {str(e)}"
         )
 
+# --- Chat Streaming Endpoint ---
+
 @app.post("/chat")
 async def chat(
     prompt: str = Form(...),
+    conversation_id: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     model: Optional[str] = Form(None),
     think: Optional[str] = Form("false")
 ):
     """
-    Accepts multipart form data (prompt: string, optional image: file, model: string, think: boolean string).
-    1. Records user message into SQLite.
-    2. Queries previous 8-10 conversation turns from SQLite for context.
-    3. Encodes image as base64 if provided and appends to Ollama payload.
-    4. Streams assistant tokens back via SSE.
-    5. Persists the assistant completion into SQLite upon stream finish.
+    Accepts multipart form data:
+    - prompt: string
+    - conversation_id: optional string
+    - image: optional uploaded file
+    - model: optional model name
+    - think: optional thinking mode boolean string
+
+    Persists messages scoped to the conversation and streams tokens via SSE.
     """
     clean_prompt = prompt.strip()
     if not clean_prompt and not image:
@@ -134,11 +320,25 @@ async def chat(
             logger.error(f"Failed to process attached image: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-    # 1. Fetch recent conversation context (last 3 turns to keep prompt eval on CPU fast)
-    context_messages = await get_context_turns(turn_count=3)
+    # Ensure conversation exists
+    active_conv_id = conversation_id.strip() if conversation_id and conversation_id.strip() else None
+    if not active_conv_id:
+        # Create a new conversation with title extracted from the prompt
+        title_summary = clean_prompt.replace("\n", " ")
+        if len(title_summary) > 36:
+            title_summary = title_summary[:33] + "..."
+        new_conv = await create_conversation(title=title_summary or "New Chat")
+        active_conv_id = new_conv["id"]
+    else:
+        # Update existing conversation timestamp and update default title if appropriate
+        await touch_conversation(active_conv_id, auto_title=clean_prompt)
 
-    # 2. Persist user message to SQLite
+    # 1. Fetch recent conversation context scoped to active conversation
+    context_messages = await get_context_turns(conversation_id=active_conv_id, turn_count=3)
+
+    # 2. Persist user message to SQLite with conversation_id
     user_msg_id = await insert_message(
+        conversation_id=active_conv_id,
         role="user",
         content=clean_prompt,
         has_image=has_image,
@@ -160,9 +360,10 @@ async def chat(
         # Immediate 2KB comment padding to bypass any browser/proxy network buffering
         yield f": {' ' * 2048}\n\n"
 
-        # Send an acknowledgment event with user_msg_id
+        # Send an acknowledgment event with conversation_id and user_msg_id
         init_event = {
             "type": "init",
+            "conversation_id": active_conv_id,
             "user_id": user_msg_id,
             "has_image": has_image
         }
@@ -189,7 +390,6 @@ async def chat(
                     yield f"data: {json.dumps(event_data)}\n\n"
 
                 if is_done:
-                    # Capture full content if provided or use accumulated
                     if chunk.get("full_content"):
                         assistant_full_text = chunk["full_content"]
                     break
@@ -209,11 +409,12 @@ async def chat(
             if not assistant_full_text:
                 assistant_full_text = f"An error occurred ({err_type}): {err_msg}"
 
-        # 5. Asynchronously persist completed assistant response into SQLite
+        # 5. Persist completed assistant response into SQLite
         assistant_id = None
         try:
             if assistant_full_text.strip():
                 assistant_id = await insert_message(
+                    conversation_id=active_conv_id,
                     role="assistant",
                     content=assistant_full_text,
                     has_image=False,
@@ -225,6 +426,7 @@ async def chat(
         # Send final completion event
         final_event = {
             "type": "done",
+            "conversation_id": active_conv_id,
             "assistant_id": assistant_id,
             "full_content": assistant_full_text
         }

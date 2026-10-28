@@ -1,12 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
+import Sidebar from './components/Sidebar';
 import ChatMessage from './components/ChatMessage';
 import ChatInput from './components/ChatInput';
-import { Bot, Sparkles, AlertCircle, RefreshCw, Terminal, Eye, Database } from 'lucide-react';
+import { Sparkles, RefreshCw, Terminal, Eye, Database } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
 export default function App() {
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem('sidebar_open');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const [conversations, setConversations] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [attachedImage, setAttachedImage] = useState(null);
@@ -16,12 +26,20 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState(['qwen3.5:4b']);
   const [ollamaStatus, setOllamaStatus] = useState({ online: false, version: '' });
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [systemError, setSystemError] = useState(null);
 
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const abortControllerRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
+
+  // Toggle and persist sidebar state
+  const handleToggleSidebar = () => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem('sidebar_open', String(next));
+      return next;
+    });
+  };
 
   // Auto-scroll handler
   const scrollToBottom = (smooth = true) => {
@@ -33,7 +51,6 @@ export default function App() {
     }
   };
 
-  // Detect user scroll up to avoid fighting manual scroll
   const handleScroll = () => {
     if (chatContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
@@ -42,18 +59,55 @@ export default function App() {
     }
   };
 
-  // Hydrate chat history on mount
-  const fetchHistory = async () => {
+  // Fetch all conversations & groups
+  const fetchConversations = async (targetActiveId = null) => {
+    try {
+      const res = await fetch(`${API_BASE}/conversations`);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      const convList = data.conversations || [];
+      const grpList = data.groups || [];
+
+      setConversations(convList);
+      setGroups(grpList);
+
+      // Determine which conversation should be active
+      let nextActiveId = targetActiveId || activeConversationId;
+      if (!nextActiveId || !convList.some((c) => c.id === nextActiveId)) {
+        if (convList.length > 0) {
+          nextActiveId = convList[0].id;
+        } else {
+          nextActiveId = null;
+        }
+      }
+
+      if (nextActiveId !== activeConversationId) {
+        setActiveConversationId(nextActiveId);
+        if (nextActiveId) {
+          loadConversationMessages(nextActiveId);
+        } else {
+          setMessages([]);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load conversations from backend:', err);
+    }
+  };
+
+  // Load messages for a specific conversation
+  const loadConversationMessages = async (convId) => {
+    if (!convId) {
+      setMessages([]);
+      return;
+    }
     try {
       setLoadingHistory(true);
-      const res = await fetch(`${API_BASE}/history?limit=50`);
+      const res = await fetch(`${API_BASE}/history?conversation_id=${encodeURIComponent(convId)}&limit=100`);
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
       setMessages(data.messages || []);
-      setSystemError(null);
     } catch (err) {
-      console.warn('Failed to load history from backend:', err);
-      // Backend might still be starting up
+      console.warn(`Failed to load history for ${convId}:`, err);
     } finally {
       setLoadingHistory(false);
     }
@@ -79,40 +133,216 @@ export default function App() {
         const modelsData = await modelsRes.json();
         if (modelsData.models && modelsData.models.length > 0) {
           setAvailableModels(modelsData.models);
-          // If currentModel not in list, pick default
           if (!modelsData.models.includes(currentModel)) {
             setCurrentModel(modelsData.default || modelsData.models[0]);
           }
         }
       }
-      setSystemError(null);
     } catch (err) {
       console.warn('Failed to reach backend API:', err);
       setOllamaStatus({ online: false, error: 'Cannot connect to backend server' });
     }
   };
 
+  // Initial load
   useEffect(() => {
-    fetchHistory();
+    fetchConversations();
     fetchSystemStatus();
 
-    // Periodic health check every 15 seconds
     const interval = setInterval(fetchSystemStatus, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  // When activeConversationId changes, load its messages
+  useEffect(() => {
+    if (activeConversationId) {
+      loadConversationMessages(activeConversationId);
+    }
+  }, [activeConversationId]);
 
   // Scroll to bottom when messages update
   useEffect(() => {
     scrollToBottom(false);
   }, [messages.length]);
 
-  // Handle clearing chat history
+  // Active conversation object
+  const activeConversation = conversations.find((c) => c.id === activeConversationId) || null;
+
+  // --- Conversation Actions ---
+
+  const handleSelectConversation = (convId) => {
+    if (convId === activeConversationId) return;
+    if (isStreaming) {
+      handleStopStreaming();
+    }
+    setActiveConversationId(convId);
+  };
+
+  const handleNewChat = async (groupId = null) => {
+    if (isStreaming) {
+      handleStopStreaming();
+    }
+    try {
+      const res = await fetch(`${API_BASE}/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New Chat', group_id: groupId })
+      });
+      if (!res.ok) throw new Error('Failed to create new conversation');
+      const newConv = await res.json();
+      setConversations((prev) => [newConv, ...prev]);
+      setActiveConversationId(newConv.id);
+      setMessages([]);
+    } catch (err) {
+      console.error('Error creating new conversation:', err);
+    }
+  };
+
+  const handleRenameConversation = async (convId, newTitle) => {
+    // Optimistic UI update
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId ? { ...c, title: newTitle } : c))
+    );
+    try {
+      await fetch(`${API_BASE}/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle })
+      });
+    } catch (err) {
+      console.error(`Failed to rename conversation ${convId}:`, err);
+    }
+  };
+
+  const handleDeleteConversation = async (convId) => {
+    try {
+      const res = await fetch(`${API_BASE}/conversations/${convId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const remaining = conversations.filter((c) => c.id !== convId);
+        setConversations(remaining);
+        if (activeConversationId === convId) {
+          if (remaining.length > 0) {
+            setActiveConversationId(remaining[0].id);
+          } else {
+            handleNewChat();
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Error deleting conversation ${convId}:`, err);
+    }
+  };
+
+  const handleMoveConversation = async (convId, targetGroupId) => {
+    // Optimistic UI update
+    const targetGroup = groups.find((g) => g.id === targetGroupId);
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              group_id: targetGroupId,
+              group_name: targetGroup ? targetGroup.name : null
+            }
+          : c
+      )
+    );
+
+    try {
+      await fetch(`${API_BASE}/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          group_id: targetGroupId,
+          clear_group: !targetGroupId
+        })
+      });
+      fetchConversations(activeConversationId);
+    } catch (err) {
+      console.error(`Error moving conversation ${convId}:`, err);
+    }
+  };
+
+  // --- Group Actions ---
+
+  const handleCreateGroup = async (name) => {
+    try {
+      const res = await fetch(`${API_BASE}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      if (res.ok) {
+        const newGroup = await res.json();
+        setGroups((prev) => [...prev, newGroup]);
+        return newGroup;
+      }
+    } catch (err) {
+      console.error('Error creating group:', err);
+    }
+    return null;
+  };
+
+  const handleRenameGroup = async (groupId, newName) => {
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, name: newName } : g))
+    );
+    setConversations((prev) =>
+      prev.map((c) => (c.group_id === groupId ? { ...c, group_name: newName } : c))
+    );
+    try {
+      await fetch(`${API_BASE}/groups/${groupId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName })
+      });
+    } catch (err) {
+      console.error('Error renaming group:', err);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    setConversations((prev) =>
+      prev.map((c) => (c.group_id === groupId ? { ...c, group_id: null, group_name: null } : c))
+    );
+    try {
+      await fetch(`${API_BASE}/groups/${groupId}`, {
+        method: 'DELETE'
+      });
+    } catch (err) {
+      console.error('Error deleting group:', err);
+    }
+  };
+
+  const handleToggleGroupExpand = async (groupId, isExpanded) => {
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, is_expanded: isExpanded } : g))
+    );
+    try {
+      await fetch(`${API_BASE}/groups/${groupId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_expanded: isExpanded })
+      });
+    } catch (err) {
+      console.error('Error updating group expand state:', err);
+    }
+  };
+
+  // Clear current conversation messages
   const handleClearHistory = async () => {
-    if (!window.confirm('Are you sure you want to clear all chat history from SQLite?')) {
+    if (!activeConversationId) return;
+    if (!window.confirm('Clear messages for this conversation from SQLite?')) {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
+      const res = await fetch(
+        `${API_BASE}/history?conversation_id=${encodeURIComponent(activeConversationId)}`,
+        { method: 'DELETE' }
+      );
       if (res.ok) {
         setMessages([]);
       } else {
@@ -140,10 +370,8 @@ export default function App() {
   const handleSendMessage = async (customPrompt) => {
     const promptToSend = (customPrompt || input).trim();
     if (!promptToSend && !attachedImage) return;
-
     if (isStreaming) return;
 
-    // Read image as base64 for optimistic UI display
     let optimisticImageData = null;
     const stagedImage = attachedImage;
 
@@ -154,7 +382,7 @@ export default function App() {
     const tempUserId = `user-${Date.now()}`;
     const tempAssistantId = `assistant-${Date.now()}`;
 
-    // 1. Optimistic UI update: Insert user message and streaming assistant placeholder
+    // Optimistic UI update
     const userMessage = {
       id: tempUserId,
       role: 'user',
@@ -186,6 +414,9 @@ export default function App() {
     formData.append('prompt', promptToSend);
     formData.append('model', currentModel);
     formData.append('think', isThinkingEnabled ? 'true' : 'false');
+    if (activeConversationId) {
+      formData.append('conversation_id', activeConversationId);
+    }
     if (stagedImage?.file) {
       formData.append('image', stagedImage.file);
     }
@@ -220,7 +451,7 @@ export default function App() {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete trailing fragment in buffer
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           const trimmedLine = line.trim();
@@ -235,7 +466,9 @@ export default function App() {
             const event = JSON.parse(dataPayload);
 
             if (event.type === 'init') {
-              // Update optimistic user message id if needed
+              if (event.conversation_id && event.conversation_id !== activeConversationId) {
+                setActiveConversationId(event.conversation_id);
+              }
               if (event.user_id) {
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -266,6 +499,8 @@ export default function App() {
                     : msg
                 )
               );
+              // Refresh conversation list to update titles and timestamps
+              fetchConversations(event.conversation_id || activeConversationId);
             } else if (event.type === 'error') {
               accumulatedAssistantText += `\n\n**Error:** ${event.error}`;
               setMessages((prev) =>
@@ -281,7 +516,6 @@ export default function App() {
               );
             }
           } catch (jsonErr) {
-            // Raw text token fallback if non-JSON SSE
             accumulatedAssistantText += dataPayload;
             setMessages((prev) =>
               prev.map((msg) =>
@@ -295,7 +529,6 @@ export default function App() {
         }
       }
 
-      // Finalize isStreaming on assistant message
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === tempAssistantId ? { ...msg, isStreaming: false } : msg
@@ -347,104 +580,135 @@ export default function App() {
   ];
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#0A0A0A] text-zinc-100 overflow-hidden font-sans">
-      {/* Top Navigation Header */}
-      <Header
-        ollamaStatus={ollamaStatus}
-        availableModels={availableModels}
-        currentModel={currentModel}
-        setCurrentModel={setCurrentModel}
-        onClearHistory={handleClearHistory}
-        onRefreshStatus={fetchSystemStatus}
-        messageCount={messages.length}
+    <div className="flex h-screen w-screen bg-[#0A0A0C] text-zinc-100 overflow-hidden font-sans">
+      {/* Sleek Left Sidebar (Collapsible to focused icon rail as shown in UI reference) */}
+      <Sidebar
+        isOpen={sidebarOpen}
+        onToggleOpen={handleToggleSidebar}
+        conversations={conversations}
+        groups={groups}
+        activeConversationId={activeConversationId}
+        onSelectConversation={handleSelectConversation}
+        onNewChat={handleNewChat}
+        onRenameConversation={handleRenameConversation}
+        onDeleteConversation={handleDeleteConversation}
+        onMoveConversation={handleMoveConversation}
+        onCreateGroup={handleCreateGroup}
+        onRenameGroup={handleRenameGroup}
+        onDeleteGroup={handleDeleteGroup}
+        onToggleGroupExpand={handleToggleGroupExpand}
       />
 
-      {/* Main Chat Scroll View */}
-      <main
-        ref={chatContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-2 md:px-6 py-4 flex flex-col justify-start"
-      >
-        <div className="max-w-4xl mx-auto w-full flex-1 flex flex-col">
-          {/* Empty Conversation Welcome State */}
-          {messages.length === 0 && !loadingHistory && (
-            <div className="my-auto py-12 flex flex-col items-center text-center animate-in fade-in duration-300">
-              <div className="relative mb-6">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-2xl shadow-indigo-500/30 ring-1 ring-white/20">
-                  <Sparkles className="w-8 h-8" />
-                </div>
-                <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono">
-                  Offline
-                </span>
-              </div>
-
-              <h2 className="text-xl font-bold tracking-tight text-white mb-2">
-                Local-First Multimodal AI Interface
-              </h2>
-              <p className="text-zinc-400 text-sm max-w-md mb-8 leading-relaxed">
-                Powered by FastAPI backend, persistent SQLite in WAL mode, and your local Ollama daemon (<span className="text-indigo-400 font-mono font-medium">{currentModel}</span>).
-              </p>
-
-              {/* Starter Suggestion Chips */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl px-2">
-                {starterChips.map((chip, idx) => {
-                  const Icon = chip.icon;
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => handleSendMessage(chip.prompt)}
-                      className="flex flex-col items-start p-3.5 rounded-xl bg-[#141414] hover:bg-[#1C1C1C] border border-white/5 hover:border-indigo-500/30 text-left transition-all group shadow-sm hover:shadow-indigo-500/10"
-                    >
-                      <div className="flex items-center gap-2 mb-2 text-indigo-400 group-hover:text-indigo-300">
-                        <Icon className="w-4 h-4" />
-                        <span className="text-xs font-semibold text-zinc-200">
-                          {chip.title}
-                        </span>
-                      </div>
-                      <p className="text-[12px] text-zinc-400 line-clamp-2 leading-relaxed">
-                        {chip.prompt}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Loading History Indicator */}
-          {loadingHistory && (
-            <div className="my-auto py-12 flex flex-col items-center justify-center text-zinc-400 gap-3">
-              <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
-              <span className="text-xs font-medium">Hydrating chat history from SQLite...</span>
-            </div>
-          )}
-
-          {/* Message List */}
-          <div className="flex flex-col space-y-1">
-            {messages.map((message) => (
-              <ChatMessage key={message.id} message={message} />
-            ))}
-          </div>
-
-          <div ref={messagesEndRef} className="h-4" />
-        </div>
-      </main>
-
-      {/* Bottom Sticky Input Section */}
-      <footer className="w-full bg-[#0A0A0A]/95 border-t border-white/[0.06] backdrop-blur-md">
-        <ChatInput
-          input={input}
-          setInput={setInput}
-          attachedImage={attachedImage}
-          setAttachedImage={setAttachedImage}
-          isStreaming={isStreaming}
-          isThinkingEnabled={isThinkingEnabled}
-          setIsThinkingEnabled={setIsThinkingEnabled}
-          onSend={() => handleSendMessage()}
-          onStop={handleStopStreaming}
-          disabled={loadingHistory}
+      {/* Main Content Area */}
+      <div className="flex flex-col flex-1 h-full min-w-0 overflow-hidden bg-[#0A0A0C]">
+        {/* Top Header */}
+        <Header
+          ollamaStatus={ollamaStatus}
+          availableModels={availableModels}
+          currentModel={currentModel}
+          setCurrentModel={setCurrentModel}
+          onClearHistory={handleClearHistory}
+          onRefreshStatus={fetchSystemStatus}
+          messageCount={messages.length}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={handleToggleSidebar}
+          activeConversation={activeConversation}
+          onRenameActiveConversation={(newTitle) => {
+            if (activeConversationId) {
+              handleRenameConversation(activeConversationId, newTitle);
+            }
+          }}
         />
-      </footer>
+
+        {/* Chat Scroll View */}
+        <main
+          ref={chatContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto px-2 md:px-6 py-4 flex flex-col justify-start"
+        >
+          <div className="max-w-4xl mx-auto w-full flex-1 flex flex-col">
+            {/* Empty Conversation Welcome State */}
+            {messages.length === 0 && !loadingHistory && (
+              <div className="my-auto py-12 flex flex-col items-center text-center animate-in fade-in duration-300">
+                <div className="relative mb-6">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-2xl shadow-indigo-500/30 ring-1 ring-white/20">
+                    <Sparkles className="w-8 h-8" />
+                  </div>
+                  <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono">
+                    Offline
+                  </span>
+                </div>
+
+                <h2 className="text-xl font-bold tracking-tight text-white mb-2">
+                  {activeConversation?.title && activeConversation.title !== 'New Chat'
+                    ? activeConversation.title
+                    : 'Local-First Multimodal AI Interface'}
+                </h2>
+                <p className="text-zinc-400 text-sm max-w-md mb-8 leading-relaxed">
+                  Powered by FastAPI backend, persistent SQLite in WAL mode, and your local Ollama daemon (<span className="text-indigo-400 font-mono font-medium">{currentModel}</span>).
+                </p>
+
+                {/* Starter Suggestion Chips */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl px-2">
+                  {starterChips.map((chip, idx) => {
+                    const Icon = chip.icon;
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => handleSendMessage(chip.prompt)}
+                        className="flex flex-col items-start p-3.5 rounded-xl bg-[#141416] hover:bg-[#1C1C20] border border-white/5 hover:border-indigo-500/30 text-left transition-all group shadow-sm hover:shadow-indigo-500/10"
+                      >
+                        <div className="flex items-center gap-2 mb-2 text-indigo-400 group-hover:text-indigo-300">
+                          <Icon className="w-4 h-4" />
+                          <span className="text-xs font-semibold text-zinc-200">
+                            {chip.title}
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-zinc-400 line-clamp-2 leading-relaxed">
+                          {chip.prompt}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Loading History Indicator */}
+            {loadingHistory && (
+              <div className="my-auto py-12 flex flex-col items-center justify-center text-zinc-400 gap-3">
+                <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
+                <span className="text-xs font-medium">Hydrating conversation from SQLite...</span>
+              </div>
+            )}
+
+            {/* Message List */}
+            <div className="flex flex-col space-y-1">
+              {messages.map((message) => (
+                <ChatMessage key={message.id} message={message} />
+              ))}
+            </div>
+
+            <div ref={messagesEndRef} className="h-4" />
+          </div>
+        </main>
+
+        {/* Bottom Sticky Input Section */}
+        <footer className="w-full bg-[#0A0A0C]/95 border-t border-white/[0.06] backdrop-blur-md">
+          <ChatInput
+            input={input}
+            setInput={setInput}
+            attachedImage={attachedImage}
+            setAttachedImage={setAttachedImage}
+            isStreaming={isStreaming}
+            isThinkingEnabled={isThinkingEnabled}
+            setIsThinkingEnabled={setIsThinkingEnabled}
+            onSend={() => handleSendMessage()}
+            onStop={handleStopStreaming}
+            disabled={loadingHistory}
+          />
+        </footer>
+      </div>
     </div>
   );
 }
