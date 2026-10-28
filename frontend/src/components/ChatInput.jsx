@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Send, Image as ImageIcon, X, Square, Sparkles } from 'lucide-react';
+import { Send, Image as ImageIcon, X, Square, Sparkles, Brain } from 'lucide-react';
 
 export default function ChatInput({
   input,
@@ -7,6 +7,8 @@ export default function ChatInput({
   attachedImage,
   setAttachedImage,
   isStreaming,
+  isThinkingEnabled = false,
+  setIsThinkingEnabled,
   onSend,
   onStop,
   disabled
@@ -123,7 +125,9 @@ export default function ChatInput({
           placeholder={
             attachedImage
               ? 'Ask anything about this image...'
-              : 'Message Ollama (qwen3.5:4b)... (Paste or drop images supported)'
+              : isThinkingEnabled
+              ? 'Message Ollama (Deep thinking mode ON)...'
+              : 'Message Ollama (Fast mode, instant reply)...'
           }
           rows={1}
           disabled={disabled}
@@ -132,8 +136,8 @@ export default function ChatInput({
 
         {/* Bottom Toolbar inside the input capsule */}
         <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-          {/* Left actions: Attach image & hidden file input */}
-          <div className="flex items-center gap-1.5">
+          {/* Left actions: Attach image & Thinking switch */}
+          <div className="flex items-center gap-2">
             <input
               type="file"
               ref={fileInputRef}
@@ -155,6 +159,43 @@ export default function ChatInput({
               <ImageIcon className="w-4 h-4" />
               <span className="hidden sm:inline text-[12px]">Attach Image</span>
             </button>
+
+            {/* Thinking on/off switch */}
+            {setIsThinkingEnabled && (
+              <button
+                type="button"
+                onClick={() => setIsThinkingEnabled(!isThinkingEnabled)}
+                disabled={isStreaming}
+                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all select-none border ${
+                  isThinkingEnabled
+                    ? 'bg-violet-600/20 text-violet-300 border-violet-500/40 shadow-sm shadow-violet-900/30'
+                    : 'bg-white/[0.03] text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border-white/5'
+                }`}
+                title={
+                  isThinkingEnabled
+                    ? 'Thinking Mode is ON: Model will reason through internal thinking tokens before answering'
+                    : 'Thinking Mode is OFF: Model answers instantly without thinking tokens (Fast)'
+                }
+              >
+                <Brain
+                  className={`w-3.5 h-3.5 transition-transform ${
+                    isThinkingEnabled ? 'text-violet-400 scale-110' : 'text-zinc-400'
+                  }`}
+                />
+                <span className="text-[12px] flex items-center gap-1.5">
+                  <span className="hidden sm:inline">Thinking:</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                      isThinkingEnabled
+                        ? 'bg-violet-500/30 text-violet-200'
+                        : 'bg-zinc-800 text-zinc-400'
+                    }`}
+                  >
+                    {isThinkingEnabled ? 'ON' : 'OFF'}
+                  </span>
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Right actions: Send or Stop */}

@@ -1,26 +1,43 @@
 import os
 import json
 import logging
+import asyncio
+import time
 import httpx
 from typing import AsyncGenerator, List, Dict, Any, Optional
 
 logger = logging.getLogger("local_ai_backend.ollama")
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+# Default to 127.0.0.1 to prevent Windows IPv6 [::1] connection timeout delays
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3.5:4b")
 FALLBACK_VISION_MODEL = os.getenv("FALLBACK_VISION_MODEL", "qwen2.5-vl:3b")
 
-async def get_available_models() -> List[str]:
-    """Fetch list of locally installed Ollama models."""
+_cached_models: List[str] = []
+_models_cache_timestamp: float = 0.0
+_CACHE_TTL_SECONDS: float = 30.0
+
+async def get_available_models(force_refresh: bool = False) -> List[str]:
+    """Fetch list of locally installed Ollama models with a 30s TTL cache to avoid latency spikes."""
+    global _cached_models, _models_cache_timestamp
+    now = time.time()
+    if not force_refresh and _cached_models and (now - _models_cache_timestamp < _CACHE_TTL_SECONDS):
+        return _cached_models
+
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
             if resp.status_code == 200:
                 data = resp.json()
-                return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+                models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+                if models:
+                    _cached_models = models
+                    _models_cache_timestamp = now
+                    return _cached_models
     except Exception as e:
         logger.warning(f"Failed to fetch models from Ollama: {e}")
-    return [DEFAULT_MODEL]
+
+    return _cached_models if _cached_models else [DEFAULT_MODEL]
 
 async def check_ollama_health() -> Dict[str, Any]:
     """Check connectivity to Ollama server."""
@@ -80,16 +97,20 @@ async def stream_ollama_chat(
         "messages": messages,
         "stream": True,
         "think": think,
+        "keep_alive": "60m",  # Keep model resident in RAM to eliminate 30s cold-start delays
         "options": {
             "temperature": 0.7,
+            "num_ctx": 2048,  # Lean context window for 3x faster CPU prompt evaluation
+            "num_thread": 4,   # Use all available CPU cores
         }
     }
 
     accumulated_content = []
     is_in_thinking_mode = False
 
+    client_timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=60.0)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
             try:
                 async with client.stream("POST", f"{OLLAMA_BASE_URL}/api/chat", json=payload) as response:
                     if response.status_code != 200:
@@ -181,6 +202,13 @@ async def stream_ollama_chat(
 
         yield {"token": "", "is_thinking": False, "done": True, "full_content": "".join(accumulated_content)}
 
+    except asyncio.CancelledError:
+        logger.info("Inference streaming cancelled by client or task abort.")
+        return
     except Exception as e:
-        err_msg = f"Inference streaming error: {str(e)}"
+        err_type = type(e).__name__
+        err_str = str(e).strip()
+        err_detail = f"{err_type}: {err_str}" if err_str else err_type
+        logger.error(f"Inference streaming error ({err_type}): {e}", exc_info=True)
+        err_msg = f"Inference streaming error: {err_detail}"
         yield {"token": err_msg, "is_thinking": False, "done": True, "full_content": err_msg}

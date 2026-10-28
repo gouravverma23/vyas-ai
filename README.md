@@ -8,7 +8,7 @@ An offline-capable, local-first multimodal chat interface powered by **Ollama**,
 
 - **Local & Private**: Runs 100% locally on your machine with zero external cloud dependencies.
 - **FastAPI + Async SQLite Backend**: High-performance backend utilizing asynchronous SQLite with Write-Ahead Logging (`WAL`) mode for fast concurrent message persistence and context retrieval.
-- **Ollama Integration**: Seamless streaming response over Server-Sent Events (SSE) with support for model selection, thinking tokens, and multimodal vision inputs.
+- **Ollama Integration & Thinking Switch**: Seamless streaming response over Server-Sent Events (SSE). Includes a **Thinking ON/OFF** toggle switch right in the input bar — keep it OFF for instant replies, or turn it ON for deep step-by-step reasoning tokens.
 - **Modern Responsive Frontend**: Built with React 19, Tailwind CSS, Lucide icons, Prism syntax highlighting, and React Markdown.
 - **Chat Persistence**: Hydrates conversation history across page reloads with one-click clear history capability.
 

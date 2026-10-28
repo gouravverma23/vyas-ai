@@ -4,13 +4,14 @@ import ChatMessage from './components/ChatMessage';
 import ChatInput from './components/ChatInput';
 import { Bot, Sparkles, AlertCircle, RefreshCw, Terminal, Eye, Database } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://127.0.0.1:8000';
 
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [attachedImage, setAttachedImage] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isThinkingEnabled, setIsThinkingEnabled] = useState(false);
   const [currentModel, setCurrentModel] = useState('qwen3.5:4b');
   const [availableModels, setAvailableModels] = useState(['qwen3.5:4b']);
   const [ollamaStatus, setOllamaStatus] = useState({ online: false, version: '' });
@@ -184,6 +185,7 @@ export default function App() {
     const formData = new FormData();
     formData.append('prompt', promptToSend);
     formData.append('model', currentModel);
+    formData.append('think', isThinkingEnabled ? 'true' : 'false');
     if (stagedImage?.file) {
       formData.append('image', stagedImage.file);
     }
@@ -250,7 +252,7 @@ export default function App() {
                     : msg
                 )
               );
-              scrollToBottom(true);
+              scrollToBottom(false);
             } else if (event.type === 'done') {
               setMessages((prev) =>
                 prev.map((msg) =>
@@ -288,7 +290,7 @@ export default function App() {
                   : msg
               )
             );
-            scrollToBottom(true);
+            scrollToBottom(false);
           }
         }
       }
@@ -436,6 +438,8 @@ export default function App() {
           attachedImage={attachedImage}
           setAttachedImage={setAttachedImage}
           isStreaming={isStreaming}
+          isThinkingEnabled={isThinkingEnabled}
+          setIsThinkingEnabled={setIsThinkingEnabled}
           onSend={() => handleSendMessage()}
           onStop={handleStopStreaming}
           disabled={loadingHistory}

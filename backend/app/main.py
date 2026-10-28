@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -97,10 +98,11 @@ async def clear_history():
 async def chat(
     prompt: str = Form(...),
     image: Optional[UploadFile] = File(None),
-    model: Optional[str] = Form(None)
+    model: Optional[str] = Form(None),
+    think: Optional[str] = Form("false")
 ):
     """
-    Accepts multipart form data (prompt: string, optional image: file).
+    Accepts multipart form data (prompt: string, optional image: file, model: string, think: boolean string).
     1. Records user message into SQLite.
     2. Queries previous 8-10 conversation turns from SQLite for context.
     3. Encodes image as base64 if provided and appends to Ollama payload.
@@ -110,6 +112,10 @@ async def chat(
     clean_prompt = prompt.strip()
     if not clean_prompt and not image:
         raise HTTPException(status_code=400, detail="Either prompt or image must be provided.")
+
+    think_enabled = False
+    if think:
+        think_enabled = str(think).strip().lower() in ("true", "1", "yes", "on")
 
     has_image = image is not None
     image_b64 = None
@@ -128,8 +134,8 @@ async def chat(
             logger.error(f"Failed to process attached image: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-    # 1. Fetch the last 8-10 turns of conversation context BEFORE inserting current user prompt
-    context_messages = await get_context_turns(turn_count=10)
+    # 1. Fetch recent conversation context (last 3 turns to keep prompt eval on CPU fast)
+    context_messages = await get_context_turns(turn_count=3)
 
     # 2. Persist user message to SQLite
     user_msg_id = await insert_message(
@@ -151,7 +157,10 @@ async def chat(
 
     # 4. Stream response generator
     async def sse_event_stream():
-        # First send an acknowledgment event with user_msg_id
+        # Immediate 2KB comment padding to bypass any browser/proxy network buffering
+        yield f": {' ' * 2048}\n\n"
+
+        # Send an acknowledgment event with user_msg_id
         init_event = {
             "type": "init",
             "user_id": user_msg_id,
@@ -165,7 +174,8 @@ async def chat(
             async for chunk in stream_ollama_chat(
                 messages=full_chat_payload,
                 model=model,
-                has_image=has_image
+                has_image=has_image,
+                think=think_enabled
             ):
                 token = chunk.get("token", "")
                 is_done = chunk.get("done", False)
@@ -184,15 +194,20 @@ async def chat(
                         assistant_full_text = chunk["full_content"]
                     break
 
+        except asyncio.CancelledError:
+            logger.info("Client disconnected or cancelled the request.")
+            return
         except Exception as e:
-            logger.error(f"Exception during stream: {e}")
+            err_type = type(e).__name__
+            err_msg = str(e).strip() or err_type
+            logger.error(f"Exception during stream ({err_type}): {e}", exc_info=True)
             err_event = {
                 "type": "error",
-                "error": str(e)
+                "error": f"{err_type}: {err_msg}"
             }
             yield f"data: {json.dumps(err_event)}\n\n"
             if not assistant_full_text:
-                assistant_full_text = f"An error occurred: {str(e)}"
+                assistant_full_text = f"An error occurred ({err_type}): {err_msg}"
 
         # 5. Asynchronously persist completed assistant response into SQLite
         assistant_id = None
@@ -220,7 +235,8 @@ async def chat(
         sse_event_stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no"
         }

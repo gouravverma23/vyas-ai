@@ -120,7 +120,7 @@ export default function ChatMessage({ message }) {
           >
             {isUser ? (
               <div className="whitespace-pre-wrap">{message.content}</div>
-            ) : (
+            ) : message.content ? (
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
@@ -145,10 +145,15 @@ export default function ChatMessage({ message }) {
               >
                 {message.content}
               </ReactMarkdown>
-            )}
+            ) : message.isStreaming ? (
+              <span className="inline-flex items-center gap-2 text-zinc-400 text-xs py-1 font-mono">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+                <span>Thinking / Generating tokens...</span>
+              </span>
+            ) : null}
 
             {/* Blinking cursor for streaming response */}
-            {!isUser && message.isStreaming && <span className="cursor-blink" />}
+            {!isUser && message.isStreaming && message.content && <span className="cursor-blink" />}
           </div>
 
           {/* Action toolbar (copy button, etc) */}

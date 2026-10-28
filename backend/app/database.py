@@ -73,10 +73,11 @@ async def get_recent_history(limit: int = 50) -> List[Dict[str, Any]]:
             ]
             return messages
 
-async def get_context_turns(turn_count: int = 10) -> List[Dict[str, Any]]:
+async def get_context_turns(turn_count: int = 3) -> List[Dict[str, Any]]:
     """
-    Query the last 8-10 turns (approx 16-20 messages) for LLM context.
-    Returns messages formatted for Ollama: [{"role": role, "content": content}]
+    Query recent turns (default 3 turns, approx 6 messages) for LLM context.
+    Keeping context lean prevents CPU prompt evaluation bottlenecks.
+    Returns clean, alternating dialog messages formatted for Ollama: [{"role": role, "content": content}]
     """
     message_limit = turn_count * 2
     async with get_db() as db:
@@ -90,7 +91,21 @@ async def get_context_turns(turn_count: int = 10) -> List[Dict[str, Any]]:
             (message_limit,)
         ) as cursor:
             rows = await cursor.fetchall()
-            return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+            raw_messages = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+            
+            # Clean and deduplicate consecutive identical roles to preserve conversation rhythm
+            cleaned_messages: List[Dict[str, Any]] = []
+            for msg in raw_messages:
+                content = (msg.get("content") or "").strip()
+                if not content:
+                    continue
+                # If the previous message was from the same role, combine them
+                if cleaned_messages and cleaned_messages[-1]["role"] == msg["role"]:
+                    cleaned_messages[-1]["content"] += f"\n\n{content}"
+                else:
+                    cleaned_messages.append({"role": msg["role"], "content": content})
+                    
+            return cleaned_messages
 
 async def clear_all_history() -> int:
     """Clear all chat messages from the database."""
