@@ -50,7 +50,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware for local React dev server
+# CORS Middleware: strictly allow local frontend origins to prevent malicious web pages
+# from making drive-by requests to localhost APIs.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -58,10 +59,9 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "*"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -324,15 +324,28 @@ async def chat(
     image_b64_list: List[str] = []
     image_data_uris: List[str] = []
 
+    MAX_IMAGE_COUNT = 10
+    MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB per image
+    ALLOWED_IMAGE_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
+
+    if len(all_files) > MAX_IMAGE_COUNT:
+        raise HTTPException(status_code=400, detail=f"Too many images. Max allowed: {MAX_IMAGE_COUNT} images.")
+
     for img_file in all_files:
         if img_file and img_file.filename:
+            mime = (img_file.content_type or "image/png").lower()
+            if mime not in ALLOWED_IMAGE_MIMES:
+                raise HTTPException(status_code=400, detail=f"Unsupported format '{mime}'. Allowed: PNG, JPEG, WEBP, GIF.")
             try:
                 img_bytes = await img_file.read()
+                if len(img_bytes) > MAX_IMAGE_SIZE_BYTES:
+                    raise HTTPException(status_code=400, detail=f"Image '{img_file.filename}' exceeds 25 MB limit.")
                 if len(img_bytes) > 0:
                     b64 = base64.b64encode(img_bytes).decode("utf-8")
-                    mime = img_file.content_type or "image/png"
                     image_b64_list.append(b64)
                     image_data_uris.append(f"data:{mime};base64,{b64}")
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Failed to process attached image '{img_file.filename}': {e}")
                 raise HTTPException(status_code=400, detail=f"Invalid image file '{img_file.filename}': {str(e)}")

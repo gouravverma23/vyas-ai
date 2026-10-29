@@ -3,6 +3,17 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { User, Copy, Check, Image as ImageIcon, Sparkles, Maximize2, X } from 'lucide-react';
 import CodeBlock from './CodeBlock';
+import MermaidBlock from './MermaidBlock';
+
+// Auto-detect Mermaid diagrams whether declared as ```mermaid or via diagram syntax
+function isMermaidCode(lang, code) {
+  const normalizedLang = (lang || '').toLowerCase().trim();
+  if (normalizedLang === 'mermaid') return true;
+  if (!code) return false;
+  const trimmed = code.trim();
+  const mermaidPattern = /^(?:%%\{init.*?%%[\r\n\s]*)?(?:graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie|gitGraph|mindmap|quadrantChart|xychart-beta|timeline|sankey-beta|kanban|block-beta|architecture-beta|C4Context|zenuml)\b/i;
+  return mermaidPattern.test(trimmed);
+}
 
 export default function ChatMessage({ message }) {
   const isUser = message.role === 'user';
@@ -193,9 +204,21 @@ export default function ChatMessage({ message }) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
-                  code({ node, inline, className, children, ...props }) {
+                  code({ node: _node, inline, className, children, ...props }) {
                     const match = /language-(\w+)/.exec(className || '');
+                    const lang = match ? match[1].toLowerCase() : '';
                     const codeString = String(children).replace(/\n$/, '');
+
+                    // Auto-render Mermaid diagrams
+                    if (!inline && isMermaidCode(lang, codeString)) {
+                      return (
+                        <MermaidBlock
+                          code={codeString}
+                          isStreaming={message.isStreaming}
+                        />
+                      );
+                    }
+
                     if (!inline && (match || codeString.includes('\n'))) {
                       return (
                         <CodeBlock

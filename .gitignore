@@ -2,13 +2,25 @@
 venv/
 .venv/
 __pycache__/
+**/__pycache__/**
 *.py[cod]
 *$py.class
+*.pyc
+
+# SQLite Databases & WAL/SHM files (Local chat history & images)
 *.db
 *.db-wal
 *.db-shm
+chat.db
+chat.db*
+backend/chat.db
+backend/chat.db*
 
 # Frontend
+node_modules/
+**/node_modules/**
+dist/
+dist-ssr/
 frontend/node_modules/
 frontend/dist/
 frontend/dist-ssr/
@@ -20,11 +32,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Environment
+# Environment & Secrets
 .env
+.env.*
 .env*.local
 
-# OS Files
+# OS & Editor
 .DS_Store
 Thumbs.db
-
+.vscode/

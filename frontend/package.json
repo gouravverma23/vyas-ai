@@ -12,6 +12,7 @@
   "dependencies": {
     "autoprefixer": "^10.6.2",
     "lucide-react": "^1.63.0",
+    "mermaid": "^12.2.0",
     "postcss": "^8.5.32",
     "prismjs": "^1.30.0",
     "react": "^19.3.1",
