@@ -23,7 +23,7 @@ export default function App() {
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [attachedImage, setAttachedImage] = useState(null);
+  const [attachedImages, setAttachedImages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinkingEnabled, setIsThinkingEnabled] = useState(false);
   const [currentModel, setCurrentModel] = useState('qwen3.5:4b');
@@ -187,7 +187,7 @@ export default function App() {
     setIsTemporaryMode(true);
     setTemporaryMessages([]);
     setInput('');
-    setAttachedImage(null);
+    setAttachedImages([]);
   };
 
   const handleExitTemporaryChat = () => {
@@ -431,14 +431,15 @@ export default function App() {
   // Send message and stream response
   const handleSendMessage = async (customPrompt) => {
     const promptToSend = (customPrompt || input).trim();
-    if (!promptToSend && !attachedImage) return;
+    const stagedImages = [...attachedImages];
+    if (!promptToSend && stagedImages.length === 0) return;
     if (isStreaming) return;
 
     let optimisticImageData = null;
-    const stagedImage = attachedImage;
-
-    if (stagedImage) {
-      optimisticImageData = stagedImage.previewUrl;
+    if (stagedImages.length === 1) {
+      optimisticImageData = stagedImages[0].previewUrl;
+    } else if (stagedImages.length > 1) {
+      optimisticImageData = stagedImages.map((img) => img.previewUrl);
     }
 
     const tempUserId = `user-${Date.now()}`;
@@ -449,7 +450,7 @@ export default function App() {
       id: tempUserId,
       role: 'user',
       content: promptToSend,
-      has_image: Boolean(stagedImage),
+      has_image: stagedImages.length > 0,
       image_data: optimisticImageData,
       created_at: new Date().toISOString()
     };
@@ -471,7 +472,7 @@ export default function App() {
     }
 
     setInput('');
-    setAttachedImage(null);
+    setAttachedImages([]);
     setIsStreaming(true);
     shouldAutoScrollRef.current = true;
     scrollToBottom(true);
@@ -494,9 +495,12 @@ export default function App() {
       formData.append('conversation_id', activeConversationId);
     }
 
-    if (stagedImage?.file) {
-      formData.append('image', stagedImage.file);
-    }
+    // Append multiple images
+    stagedImages.forEach((img) => {
+      if (img?.file) {
+        formData.append('images', img.file);
+      }
+    });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -822,8 +826,8 @@ export default function App() {
           <ChatInput
             input={input}
             setInput={setInput}
-            attachedImage={attachedImage}
-            setAttachedImage={setAttachedImage}
+            attachedImages={attachedImages}
+            setAttachedImages={setAttachedImages}
             isStreaming={isStreaming}
             isThinkingEnabled={isThinkingEnabled}
             setIsThinkingEnabled={setIsThinkingEnabled}

@@ -1,9 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Send, Image as ImageIcon, X, Square, Brain, Ghost, ChevronDown, Check } from 'lucide-react';
+import { Send, Image as ImageIcon, X, Square, Brain, Ghost, ChevronDown, Check, Plus } from 'lucide-react';
 
 export default function ChatInput({
   input,
   setInput,
+  attachedImages = [],
+  setAttachedImages,
   attachedImage,
   setAttachedImage,
   isStreaming,
@@ -21,6 +23,28 @@ export default function ChatInput({
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Normalize images support whether array or single image prop is provided
+  const currentImages = attachedImages && attachedImages.length > 0
+    ? attachedImages
+    : (attachedImage ? [attachedImage] : []);
+
+  const updateImages = (updater) => {
+    if (setAttachedImages) {
+      if (typeof updater === 'function') {
+        setAttachedImages(updater);
+      } else {
+        setAttachedImages(updater);
+      }
+    } else if (setAttachedImage) {
+      if (typeof updater === 'function') {
+        const next = updater(currentImages);
+        setAttachedImage(next[0] || null);
+      } else {
+        setAttachedImage(updater[0] || null);
+      }
+    }
+  };
+
   // Auto-resize textarea based on content
   useEffect(() => {
     if (textareaRef.current) {
@@ -33,19 +57,23 @@ export default function ChatInput({
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!isStreaming && (input.trim() || attachedImage)) {
+      if (!isStreaming && (input.trim() || currentImages.length > 0)) {
         onSend();
       }
     }
   };
 
   const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      const previewUrl = URL.createObjectURL(file);
-      setAttachedImage({ file, previewUrl });
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+      const newItems = imageFiles.map((file, idx) => ({
+        id: `img-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`,
+        file,
+        previewUrl: URL.createObjectURL(file)
+      }));
+      updateImages((prev) => [...prev, ...newItems]);
     }
-    // reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -54,34 +82,55 @@ export default function ChatInput({
   const handlePaste = (e) => {
     const items = e.clipboardData?.items;
     if (items) {
+      const newItems = [];
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.startsWith('image/')) {
           const file = items[i].getAsFile();
           if (file) {
-            const previewUrl = URL.createObjectURL(file);
-            setAttachedImage({ file, previewUrl });
-            e.preventDefault();
-            break;
+            newItems.push({
+              id: `img-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 7)}`,
+              file,
+              previewUrl: URL.createObjectURL(file)
+            });
           }
         }
+      }
+      if (newItems.length > 0) {
+        updateImages((prev) => [...prev, ...newItems]);
+        e.preventDefault();
       }
     }
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      const previewUrl = URL.createObjectURL(file);
-      setAttachedImage({ file, previewUrl });
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length > 0) {
+      const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+      const newItems = imageFiles.map((file, idx) => ({
+        id: `img-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`,
+        file,
+        previewUrl: URL.createObjectURL(file)
+      }));
+      updateImages((prev) => [...prev, ...newItems]);
     }
   };
 
-  const removeAttachedImage = () => {
-    if (attachedImage?.previewUrl) {
-      URL.revokeObjectURL(attachedImage.previewUrl);
-    }
-    setAttachedImage(null);
+  const removeAttachedImage = (idToRemove) => {
+    updateImages((prev) => {
+      const item = prev.find((img) => img.id === idToRemove);
+      if (item?.previewUrl) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+      return prev.filter((img) => img.id !== idToRemove);
+    });
+  };
+
+  const clearAllImages = () => {
+    currentImages.forEach((img) => {
+      if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
+    });
+    updateImages([]);
   };
 
   return (
@@ -90,32 +139,67 @@ export default function ChatInput({
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
     >
-      {/* Staged Image Preview Area */}
-      {attachedImage && (
-        <div className="mb-2.5 flex items-center gap-3 bg-[#161616] border border-white/10 rounded-xl p-2.5 max-w-sm shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-150">
-          <div className="relative group rounded-lg overflow-hidden border border-white/10 w-16 h-16 bg-black flex-shrink-0">
-            <img
-              src={attachedImage.previewUrl}
-              alt="Staged upload preview"
-              className="w-full h-full object-cover"
-            />
+      {/* Staged Multiple Images Preview Area */}
+      {currentImages.length > 0 && (
+        <div className="mb-2.5 p-2 rounded-2xl bg-[#141416]/95 border border-white/10 backdrop-blur-md shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center justify-between px-2 py-1 mb-1.5 text-xs text-zinc-400 border-b border-white/5">
+            <div className="flex items-center gap-1.5 font-medium text-zinc-300">
+              <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Attached Images ({currentImages.length})</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1 font-medium"
+                title="Add more images"
+              >
+                <Plus className="w-3 h-3" /> Add More
+              </button>
+              <span className="text-zinc-600">•</span>
+              <button
+                type="button"
+                onClick={clearAllImages}
+                className="text-[11px] text-rose-400 hover:text-rose-300 transition-colors font-medium"
+              >
+                Clear All
+              </button>
+            </div>
           </div>
-          <div className="flex-1 min-w-0 pr-1">
-            <p className="text-xs font-medium text-zinc-200 truncate">
-              {attachedImage.file.name || 'Attached Image'}
-            </p>
-            <p className="text-[11px] text-zinc-400 mt-0.5">
-              {(attachedImage.file.size / 1024).toFixed(1)} KB • Multimodal payload
-            </p>
+
+          {/* Horizontal scrollable image cards */}
+          <div className="flex items-center gap-2.5 overflow-x-auto pb-1 pt-0.5 px-1 scrollbar-thin">
+            {currentImages.map((img, index) => (
+              <div
+                key={img.id || index}
+                className="relative group/card flex-shrink-0 w-24 rounded-xl overflow-hidden border border-white/10 bg-black/60 shadow-md transition-all hover:border-indigo-500/40"
+              >
+                <div className="w-24 h-20 bg-black flex items-center justify-center overflow-hidden">
+                  <img
+                    src={img.previewUrl}
+                    alt={img.file?.name || `Attached ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="p-1 px-1.5 bg-[#18181A] border-t border-white/5">
+                  <p className="text-[10px] text-zinc-300 truncate" title={img.file?.name}>
+                    {img.file?.name || `Image ${index + 1}`}
+                  </p>
+                  <p className="text-[9px] text-zinc-500 font-mono">
+                    {img.file?.size ? `${(img.file.size / 1024).toFixed(0)} KB` : 'Ready'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAttachedImage(img.id)}
+                  className="absolute top-1 right-1 p-1 rounded-full bg-black/80 hover:bg-rose-600 text-white opacity-90 group-hover/card:opacity-100 transition-all shadow-md"
+                  title="Remove this image"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
           </div>
-          <button
-            type="button"
-            onClick={removeAttachedImage}
-            className="p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 transition-all border border-transparent hover:border-rose-500/30"
-            title="Remove attached image"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </div>
       )}
 
@@ -130,8 +214,8 @@ export default function ChatInput({
           placeholder={
             isTemporaryMode
               ? 'Message in temporary chat (not saved to database)...'
-              : attachedImage
-              ? 'Ask anything about this image...'
+              : currentImages.length > 0
+              ? `Ask anything about the ${currentImages.length} attached image${currentImages.length > 1 ? 's' : ''}...`
               : isThinkingEnabled
               ? 'Message Ollama (Deep thinking mode ON)...'
               : 'Message Ollama (Fast mode, instant reply)...'
@@ -143,7 +227,7 @@ export default function ChatInput({
 
         {/* Bottom Toolbar inside the input capsule */}
         <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-          {/* Left actions: Model Selector + Attach image & Thinking switch */}
+          {/* Left actions: Model Selector + Attach images & Thinking switch */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {/* Model Selection Dropdown (Inside Input Box) */}
             {setCurrentModel && currentModel && (
@@ -207,11 +291,13 @@ export default function ChatInput({
               </div>
             )}
 
+            {/* Attach Images (Multiple enabled) */}
             <input
               type="file"
               ref={fileInputRef}
               onChange={handleFileChange}
               accept="image/png, image/jpeg, image/webp, image/gif"
+              multiple
               className="hidden"
             />
             <button
@@ -219,14 +305,16 @@ export default function ChatInput({
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
               className={`p-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all ${
-                attachedImage
+                currentImages.length > 0
                   ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
               }`}
-              title="Attach image for vision model"
+              title="Attach one or more images for multimodal vision models"
             >
               <ImageIcon className="w-4 h-4" />
-              <span className="hidden sm:inline text-[12px]">Attach Image</span>
+              <span className="hidden sm:inline text-[12px]">
+                {currentImages.length > 0 ? `Images (${currentImages.length})` : 'Attach Images'}
+              </span>
             </button>
 
             {/* Thinking on/off switch */}
@@ -293,9 +381,9 @@ export default function ChatInput({
               <button
                 type="button"
                 onClick={onSend}
-                disabled={(!input.trim() && !attachedImage) || disabled}
+                disabled={(!input.trim() && currentImages.length === 0) || disabled}
                 className={`p-2.5 rounded-xl flex items-center justify-center transition-all ${
-                  input.trim() || attachedImage
+                  input.trim() || currentImages.length > 0
                     ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-95'
                     : 'bg-white/5 text-zinc-400 cursor-not-allowed'
                 }`}

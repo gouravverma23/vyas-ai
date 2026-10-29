@@ -282,6 +282,7 @@ async def clear_history(conversation_id: Optional[str] = Query(None)):
 async def chat(
     prompt: str = Form(...),
     conversation_id: Optional[str] = Form(None),
+    images: Optional[List[UploadFile]] = File(None),
     image: Optional[UploadFile] = File(None),
     model: Optional[str] = Form(None),
     think: Optional[str] = Form("false"),
@@ -292,17 +293,27 @@ async def chat(
     Accepts multipart form data:
     - prompt: string
     - conversation_id: optional string
-    - image: optional uploaded file
+    - images: optional multiple uploaded files
+    - image: optional single uploaded file (for backwards compatibility)
     - model: optional model name
     - think: optional thinking mode boolean string
     - is_temporary: optional boolean string (if true, chat is not persisted to SQLite)
     - context_messages: optional JSON string for temporary chat context
 
     Persists messages scoped to the conversation and streams tokens via SSE.
+    Supports single or multiple images passed to multimodal vision models.
     """
     clean_prompt = prompt.strip()
-    if not clean_prompt and not image:
-        raise HTTPException(status_code=400, detail="Either prompt or image must be provided.")
+
+    # Collect all image files (both from `images` list and optional single `image`)
+    all_files: List[UploadFile] = []
+    if images:
+        all_files.extend(images)
+    if image and image not in all_files:
+        all_files.append(image)
+
+    if not clean_prompt and not all_files:
+        raise HTTPException(status_code=400, detail="Either prompt or at least one image must be provided.")
 
     think_enabled = False
     if think:
@@ -310,22 +321,30 @@ async def chat(
 
     is_temp = str(is_temporary).strip().lower() in ("true", "1", "yes", "on")
 
-    has_image = image is not None
-    image_b64 = None
-    image_data_uri = None
+    image_b64_list: List[str] = []
+    image_data_uris: List[str] = []
 
-    if has_image:
-        try:
-            image_bytes = await image.read()
-            if len(image_bytes) == 0:
-                has_image = False
-            else:
-                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                mime_type = image.content_type or "image/png"
-                image_data_uri = f"data:{mime_type};base64,{image_b64}"
-        except Exception as e:
-            logger.error(f"Failed to process attached image: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+    for img_file in all_files:
+        if img_file and img_file.filename:
+            try:
+                img_bytes = await img_file.read()
+                if len(img_bytes) > 0:
+                    b64 = base64.b64encode(img_bytes).decode("utf-8")
+                    mime = img_file.content_type or "image/png"
+                    image_b64_list.append(b64)
+                    image_data_uris.append(f"data:{mime};base64,{b64}")
+            except Exception as e:
+                logger.error(f"Failed to process attached image '{img_file.filename}': {e}")
+                raise HTTPException(status_code=400, detail=f"Invalid image file '{img_file.filename}': {str(e)}")
+
+    has_images = len(image_b64_list) > 0
+    # Store single string if 1 image, JSON string list if multiple images for clean backwards-compatibility
+    image_data_payload: Optional[str] = None
+    if image_data_uris:
+        if len(image_data_uris) == 1:
+            image_data_payload = image_data_uris[0]
+        else:
+            image_data_payload = json.dumps(image_data_uris)
 
     if is_temp:
         active_conv_id = "temporary"
@@ -353,14 +372,14 @@ async def chat(
         active_conv_id = conversation_id.strip() if conversation_id and conversation_id.strip() else None
         if not active_conv_id:
             # Create a new conversation with title extracted from the prompt
-            title_summary = clean_prompt.replace("\n", " ")
+            title_summary = clean_prompt.replace("\n", " ") if clean_prompt else "Image Analysis"
             if len(title_summary) > 36:
                 title_summary = title_summary[:33] + "..."
             new_conv = await create_conversation(title=title_summary or "New Chat")
             active_conv_id = new_conv["id"]
         else:
             # Update existing conversation timestamp and update default title if appropriate
-            await touch_conversation(active_conv_id, auto_title=clean_prompt)
+            await touch_conversation(active_conv_id, auto_title=clean_prompt or "Image Analysis")
 
         # 1. Fetch recent conversation context scoped to active conversation
         context_payload = await get_context_turns(conversation_id=active_conv_id, turn_count=3)
@@ -370,8 +389,8 @@ async def chat(
             conversation_id=active_conv_id,
             role="user",
             content=clean_prompt,
-            has_image=has_image,
-            image_data=image_data_uri
+            has_image=has_images,
+            image_data=image_data_payload
         )
 
     # 3. Construct current message with optional multimodal payload
@@ -379,8 +398,8 @@ async def chat(
         "role": "user",
         "content": clean_prompt
     }
-    if has_image and image_b64:
-        current_message["images"] = [image_b64]
+    if image_b64_list:
+        current_message["images"] = image_b64_list
 
     full_chat_payload = context_payload + [current_message]
 
@@ -394,7 +413,8 @@ async def chat(
             "type": "init",
             "conversation_id": active_conv_id,
             "user_id": user_msg_id,
-            "has_image": has_image,
+            "has_image": has_images,
+            "image_count": len(image_b64_list),
             "is_temporary": is_temp
         }
         yield f"data: {json.dumps(init_event)}\n\n"
@@ -436,7 +456,7 @@ async def chat(
             async for chunk in stream_ollama_chat(
                 messages=full_chat_payload,
                 model=model,
-                has_image=has_image,
+                has_image=has_images,
                 think=think_enabled
             ):
                 token = chunk.get("token", "")

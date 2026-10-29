@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, User, Copy, Check, Image as ImageIcon, Sparkles, Maximize2, X } from 'lucide-react';
+import { User, Copy, Check, Image as ImageIcon, Sparkles, Maximize2, X } from 'lucide-react';
 import CodeBlock from './CodeBlock';
 
 export default function ChatMessage({ message }) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
-  const [expandedImage, setExpandedImage] = useState(false);
+  const [expandedImageUrl, setExpandedImageUrl] = useState(null);
 
   const handleCopyMessage = async () => {
     try {
@@ -29,6 +29,27 @@ export default function ChatMessage({ message }) {
       return '';
     }
   };
+
+  // Parse image_data which could be a single data URI or a JSON array of data URIs
+  const getImages = () => {
+    if (!message.image_data) return [];
+    if (Array.isArray(message.image_data)) return message.image_data;
+    if (typeof message.image_data === 'string') {
+      const trimmed = message.image_data.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // fallback to single string
+        }
+      }
+      return [trimmed];
+    }
+    return [];
+  };
+
+  const images = getImages();
 
   return (
     <div
@@ -80,33 +101,81 @@ export default function ChatMessage({ message }) {
             )}
           </div>
 
-          {/* Attached Image if present */}
-          {(message.has_image || message.image_data) && (
+          {/* Attached Images Gallery (Supports single or multiple images) */}
+          {(images.length > 0 || message.has_image) && (
             <div className={`mb-3 ${isUser ? 'flex justify-end' : 'flex justify-start'}`}>
-              <div className="relative group/img rounded-xl overflow-hidden border border-white/10 bg-[#141414] shadow-lg max-w-xs transition-all hover:border-indigo-500/50">
-                {message.image_data ? (
+              {images.length === 1 ? (
+                /* Single Image View */
+                <div className="relative group/img rounded-xl overflow-hidden border border-white/10 bg-[#141414] shadow-lg max-w-xs transition-all hover:border-indigo-500/50">
                   <img
-                    src={message.image_data}
+                    src={images[0]}
                     alt="Uploaded user media"
                     className="max-h-56 w-auto object-cover rounded-xl cursor-pointer"
-                    onClick={() => setExpandedImage(true)}
+                    onClick={() => setExpandedImageUrl(images[0])}
                   />
-                ) : (
-                  <div className="p-3 flex items-center gap-2 text-xs text-zinc-400">
-                    <ImageIcon className="w-4 h-4 text-indigo-400" />
-                    <span>Multimodal Image Attached</span>
-                  </div>
-                )}
-                {message.image_data && (
                   <button
-                    onClick={() => setExpandedImage(true)}
+                    onClick={() => setExpandedImageUrl(images[0])}
                     className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white"
                     title="Click to expand"
                   >
                     <Maximize2 className="w-5 h-5 drop-shadow" />
                   </button>
-                )}
-              </div>
+                </div>
+              ) : images.length === 2 ? (
+                /* Two Images Side-by-Side */
+                <div className="grid grid-cols-2 gap-2 max-w-sm sm:max-w-md">
+                  {images.map((src, idx) => (
+                    <div
+                      key={idx}
+                      className="relative group/img rounded-xl overflow-hidden border border-white/10 bg-[#141414] shadow-md transition-all hover:border-indigo-500/50"
+                    >
+                      <img
+                        src={src}
+                        alt={`Uploaded user media ${idx + 1}`}
+                        className="h-36 sm:h-44 w-full object-cover cursor-pointer"
+                        onClick={() => setExpandedImageUrl(src)}
+                      />
+                      <button
+                        onClick={() => setExpandedImageUrl(src)}
+                        className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white"
+                        title="Click to expand"
+                      >
+                        <Maximize2 className="w-4 h-4 drop-shadow" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : images.length > 2 ? (
+                /* 3+ Images Responsive Grid */
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-w-md sm:max-w-lg">
+                  {images.map((src, idx) => (
+                    <div
+                      key={idx}
+                      className="relative group/img rounded-xl overflow-hidden border border-white/10 bg-[#141414] shadow-md transition-all hover:border-indigo-500/50"
+                    >
+                      <img
+                        src={src}
+                        alt={`Uploaded user media ${idx + 1}`}
+                        className="h-28 sm:h-32 w-full object-cover cursor-pointer"
+                        onClick={() => setExpandedImageUrl(src)}
+                      />
+                      <button
+                        onClick={() => setExpandedImageUrl(src)}
+                        className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white"
+                        title="Click to expand"
+                      >
+                        <Maximize2 className="w-4 h-4 drop-shadow" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* Fallback placeholder */
+                <div className="p-3 rounded-xl border border-white/10 bg-[#141414] flex items-center gap-2 text-xs text-zinc-400">
+                  <ImageIcon className="w-4 h-4 text-indigo-400" />
+                  <span>Multimodal Image Attached</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -140,63 +209,55 @@ export default function ChatMessage({ message }) {
                         {children}
                       </code>
                     );
-                  },
+                  }
                 }}
               >
                 {message.content}
               </ReactMarkdown>
             ) : message.isStreaming ? (
-              <span className="inline-flex items-center gap-2 text-zinc-400 text-xs py-1 font-mono">
-                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
-                <span>Thinking / Generating tokens...</span>
-              </span>
+              <span className="cursor-blink" />
             ) : null}
-
-            {/* Blinking cursor for streaming response */}
-            {!isUser && message.isStreaming && message.content && <span className="cursor-blink" />}
           </div>
 
-          {/* Action toolbar (copy button, etc) */}
-          <div
-            className={`flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity ${
-              isUser ? 'justify-end' : 'justify-start'
-            }`}
-          >
-            <button
-              onClick={handleCopyMessage}
-              className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-200 px-2 py-0.5 rounded hover:bg-white/5 transition-all"
-              title="Copy message"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  <span className="text-emerald-400">Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3" />
-                  <span>Copy</span>
-                </>
-              )}
-            </button>
-          </div>
+          {/* Assistant message action buttons */}
+          {!isUser && !message.isStreaming && message.content && (
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={handleCopyMessage}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-white/5 text-xs transition-colors"
+                title="Copy response"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Expanded Image Modal */}
-      {expandedImage && message.image_data && (
+      {/* Expanded Image Lightbox Modal */}
+      {expandedImageUrl && (
         <div
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4"
-          onClick={() => setExpandedImage(false)}
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setExpandedImageUrl(null)}
         >
-          <div className="relative max-w-4xl max-h-[90vh]">
+          <div className="relative max-w-5xl max-h-[90vh]">
             <img
-              src={message.image_data}
+              src={expandedImageUrl}
               alt="Enlarged multimodal preview"
-              className="max-h-[85vh] max-w-full rounded-xl object-contain border border-white/20 shadow-2xl"
+              className="max-h-[85vh] max-w-full rounded-2xl object-contain border border-white/20 shadow-2xl"
             />
             <button
-              onClick={() => setExpandedImage(false)}
+              onClick={() => setExpandedImageUrl(null)}
               className="absolute -top-10 right-0 p-1.5 rounded-full bg-white/10 text-white hover:bg-white/20 transition-all"
             >
               <X className="w-5 h-5" />
