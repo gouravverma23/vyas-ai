@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { Send, Image as ImageIcon, X, Square, Sparkles, Brain } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Send, Image as ImageIcon, X, Square, Brain, Ghost, ChevronDown, Check } from 'lucide-react';
 
 export default function ChatInput({
   input,
@@ -11,8 +11,13 @@ export default function ChatInput({
   setIsThinkingEnabled,
   onSend,
   onStop,
-  disabled
+  disabled,
+  isTemporaryMode = false,
+  availableModels = [],
+  currentModel,
+  setCurrentModel
 }) {
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -123,7 +128,9 @@ export default function ChatInput({
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={
-            attachedImage
+            isTemporaryMode
+              ? 'Message in temporary chat (not saved to database)...'
+              : attachedImage
               ? 'Ask anything about this image...'
               : isThinkingEnabled
               ? 'Message Ollama (Deep thinking mode ON)...'
@@ -136,8 +143,70 @@ export default function ChatInput({
 
         {/* Bottom Toolbar inside the input capsule */}
         <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-          {/* Left actions: Attach image & Thinking switch */}
-          <div className="flex items-center gap-2">
+          {/* Left actions: Model Selector + Attach image & Thinking switch */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Model Selection Dropdown (Inside Input Box) */}
+            {setCurrentModel && currentModel && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
+                  disabled={isStreaming}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-xs font-medium text-zinc-200 transition-all shadow-sm group disabled:opacity-50"
+                  title="Select local Ollama model"
+                >
+                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" />
+                  <span className="font-mono text-zinc-100 max-w-[100px] sm:max-w-[140px] truncate text-[11.5px]">
+                    {currentModel}
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-transform flex-shrink-0" />
+                </button>
+
+                {modelDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setModelDropdownOpen(false)}
+                    />
+                    <div className="absolute bottom-full left-0 mb-2 w-64 rounded-xl bg-[#18181B] border border-white/10 p-1.5 shadow-2xl z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                      <div className="px-2.5 py-1.5 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 border-b border-white/5 flex items-center justify-between">
+                        <span>Local Models</span>
+                        <span className="font-mono text-[9px] text-zinc-500">{availableModels.length} available</span>
+                      </div>
+                      <div className="max-h-60 overflow-y-auto py-1 space-y-0.5">
+                        {availableModels.length > 0 ? (
+                          availableModels.map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => {
+                                setCurrentModel(m);
+                                setModelDropdownOpen(false);
+                              }}
+                              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors font-mono ${
+                                currentModel === m
+                                  ? 'bg-indigo-600/20 text-indigo-300 font-semibold'
+                                  : 'text-zinc-300 hover:bg-white/5'
+                              }`}
+                            >
+                              <span className="truncate">{m}</span>
+                              {currentModel === m && (
+                                <Check className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0 ml-1" />
+                              )}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-zinc-400 text-[11px]">
+                            No models discovered. Ensure Ollama is running.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <input
               type="file"
               ref={fileInputRef}
@@ -200,6 +269,12 @@ export default function ChatInput({
 
           {/* Right actions: Send or Stop */}
           <div className="flex items-center gap-2">
+            {isTemporaryMode && (
+              <span className="flex items-center gap-1 text-[11px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                <Ghost className="w-3 h-3" /> Incognito (Unsaved)
+              </span>
+            )}
+
             <span className="hidden md:inline text-[11px] text-zinc-400 mr-1 select-none">
               Enter to send • Shift+Enter for newline
             </span>

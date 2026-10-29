@@ -3,7 +3,7 @@ import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import ChatMessage from './components/ChatMessage';
 import ChatInput from './components/ChatInput';
-import { Sparkles, RefreshCw, Terminal, Eye, Database } from 'lucide-react';
+import { Sparkles, RefreshCw, Terminal, Eye, Database, Ghost, ShieldAlert } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
@@ -16,6 +16,10 @@ export default function App() {
   const [conversations, setConversations] = useState([]);
   const [groups, setGroups] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
+
+  // Temporary (unsaved / incognito) chat state
+  const [isTemporaryMode, setIsTemporaryMode] = useState(false);
+  const [temporaryMessages, setTemporaryMessages] = useState([]);
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -71,22 +75,23 @@ export default function App() {
       setConversations(convList);
       setGroups(grpList);
 
-      // Determine which conversation should be active
-      let nextActiveId = targetActiveId || activeConversationId;
-      if (!nextActiveId || !convList.some((c) => c.id === nextActiveId)) {
-        if (convList.length > 0) {
-          nextActiveId = convList[0].id;
-        } else {
-          nextActiveId = null;
+      if (!isTemporaryMode) {
+        let nextActiveId = targetActiveId || activeConversationId;
+        if (!nextActiveId || !convList.some((c) => c.id === nextActiveId)) {
+          if (convList.length > 0) {
+            nextActiveId = convList[0].id;
+          } else {
+            nextActiveId = null;
+          }
         }
-      }
 
-      if (nextActiveId !== activeConversationId) {
-        setActiveConversationId(nextActiveId);
-        if (nextActiveId) {
-          loadConversationMessages(nextActiveId);
-        } else {
-          setMessages([]);
+        if (nextActiveId !== activeConversationId) {
+          setActiveConversationId(nextActiveId);
+          if (nextActiveId) {
+            loadConversationMessages(nextActiveId);
+          } else {
+            setMessages([]);
+          }
         }
       }
     } catch (err) {
@@ -96,7 +101,7 @@ export default function App() {
 
   // Load messages for a specific conversation
   const loadConversationMessages = async (convId) => {
-    if (!convId) {
+    if (!convId || isTemporaryMode) {
       setMessages([]);
       return;
     }
@@ -153,27 +158,63 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // When activeConversationId changes, load its messages
+  // When activeConversationId changes and not in temporary mode, load its messages
   useEffect(() => {
-    if (activeConversationId) {
+    if (activeConversationId && !isTemporaryMode) {
       loadConversationMessages(activeConversationId);
     }
-  }, [activeConversationId]);
+  }, [activeConversationId, isTemporaryMode]);
+
+  // Current active messages depending on temporary mode
+  const displayMessages = isTemporaryMode ? temporaryMessages : messages;
 
   // Scroll to bottom when messages update
   useEffect(() => {
     scrollToBottom(false);
-  }, [messages.length]);
+  }, [displayMessages.length]);
 
   // Active conversation object
-  const activeConversation = conversations.find((c) => c.id === activeConversationId) || null;
+  const activeConversation = isTemporaryMode
+    ? { id: 'temporary', title: 'Temporary Chat', is_temporary: true }
+    : conversations.find((c) => c.id === activeConversationId) || null;
+
+  // --- Temporary Chat Actions ---
+
+  const handleStartTemporaryChat = () => {
+    if (isStreaming) {
+      handleStopStreaming();
+    }
+    setIsTemporaryMode(true);
+    setTemporaryMessages([]);
+    setInput('');
+    setAttachedImage(null);
+  };
+
+  const handleExitTemporaryChat = () => {
+    if (isStreaming) {
+      handleStopStreaming();
+    }
+    setIsTemporaryMode(false);
+    setTemporaryMessages([]);
+    if (conversations.length > 0) {
+      const targetId = activeConversationId && conversations.some(c => c.id === activeConversationId)
+        ? activeConversationId
+        : conversations[0].id;
+      setActiveConversationId(targetId);
+      loadConversationMessages(targetId);
+    }
+  };
 
   // --- Conversation Actions ---
 
   const handleSelectConversation = (convId) => {
-    if (convId === activeConversationId) return;
+    if (!isTemporaryMode && convId === activeConversationId) return;
     if (isStreaming) {
       handleStopStreaming();
+    }
+    if (isTemporaryMode) {
+      setIsTemporaryMode(false);
+      setTemporaryMessages([]);
     }
     setActiveConversationId(convId);
   };
@@ -181,6 +222,10 @@ export default function App() {
   const handleNewChat = async (groupId = null) => {
     if (isStreaming) {
       handleStopStreaming();
+    }
+    if (isTemporaryMode) {
+      setIsTemporaryMode(false);
+      setTemporaryMessages([]);
     }
     try {
       const res = await fetch(`${API_BASE}/conversations`, {
@@ -199,7 +244,7 @@ export default function App() {
   };
 
   const handleRenameConversation = async (convId, newTitle) => {
-    // Optimistic UI update
+    if (isTemporaryMode || convId === 'temporary') return;
     setConversations((prev) =>
       prev.map((c) => (c.id === convId ? { ...c, title: newTitle } : c))
     );
@@ -215,6 +260,7 @@ export default function App() {
   };
 
   const handleDeleteConversation = async (convId) => {
+    if (isTemporaryMode || convId === 'temporary') return;
     try {
       const res = await fetch(`${API_BASE}/conversations/${convId}`, {
         method: 'DELETE'
@@ -236,7 +282,7 @@ export default function App() {
   };
 
   const handleMoveConversation = async (convId, targetGroupId) => {
-    // Optimistic UI update
+    if (isTemporaryMode || convId === 'temporary') return;
     const targetGroup = groups.find((g) => g.id === targetGroupId);
     setConversations((prev) =>
       prev.map((c) =>
@@ -334,6 +380,11 @@ export default function App() {
 
   // Clear current conversation messages
   const handleClearHistory = async () => {
+    if (isTemporaryMode) {
+      setTemporaryMessages([]);
+      return;
+    }
+
     if (!activeConversationId) return;
     if (!window.confirm('Clear messages for this conversation from SQLite?')) {
       return;
@@ -361,14 +412,20 @@ export default function App() {
       abortControllerRef.current = null;
     }
     setIsStreaming(false);
-    setMessages((prev) =>
-      prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
-    );
 
-    // Refresh conversation list to update preview and message count
-    setTimeout(() => {
-      fetchConversations(activeConversationId);
-    }, 400);
+    if (isTemporaryMode) {
+      setTemporaryMessages((prev) =>
+        prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
+      );
+    } else {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
+      );
+      // Refresh conversation list to update preview and message count
+      setTimeout(() => {
+        fetchConversations(activeConversationId);
+      }, 400);
+    }
   };
 
   // Send message and stream response
@@ -407,7 +464,12 @@ export default function App() {
       isStreaming: true
     };
 
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    if (isTemporaryMode) {
+      setTemporaryMessages((prev) => [...prev, userMessage, assistantMessage]);
+    } else {
+      setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    }
+
     setInput('');
     setAttachedImage(null);
     setIsStreaming(true);
@@ -419,9 +481,19 @@ export default function App() {
     formData.append('prompt', promptToSend);
     formData.append('model', currentModel);
     formData.append('think', isThinkingEnabled ? 'true' : 'false');
-    if (activeConversationId) {
+
+    if (isTemporaryMode) {
+      formData.append('is_temporary', 'true');
+      // Pass previous temporary messages as context for LLM
+      const contextList = temporaryMessages.slice(-6).map((m) => ({
+        role: m.role,
+        content: m.content
+      }));
+      formData.append('context_messages', JSON.stringify(contextList));
+    } else if (activeConversationId) {
       formData.append('conversation_id', activeConversationId);
     }
+
     if (stagedImage?.file) {
       formData.append('image', stagedImage.file);
     }
@@ -450,6 +522,14 @@ export default function App() {
       let buffer = '';
       let accumulatedAssistantText = '';
 
+      const updateTargetMessages = (updater) => {
+        if (isTemporaryMode) {
+          setTemporaryMessages(updater);
+        } else {
+          setMessages(updater);
+        }
+      };
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -471,11 +551,11 @@ export default function App() {
             const event = JSON.parse(dataPayload);
 
             if (event.type === 'init') {
-              if (event.conversation_id && event.conversation_id !== activeConversationId) {
+              if (!isTemporaryMode && event.conversation_id && event.conversation_id !== activeConversationId) {
                 setActiveConversationId(event.conversation_id);
               }
               if (event.user_id) {
-                setMessages((prev) =>
+                updateTargetMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === tempUserId ? { ...msg, id: event.user_id } : msg
                   )
@@ -483,7 +563,7 @@ export default function App() {
               }
             } else if (event.type === 'chunk') {
               accumulatedAssistantText += event.token;
-              setMessages((prev) =>
+              updateTargetMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === tempAssistantId
                     ? { ...msg, content: accumulatedAssistantText }
@@ -492,7 +572,7 @@ export default function App() {
               );
               scrollToBottom(false);
             } else if (event.type === 'done') {
-              setMessages((prev) =>
+              updateTargetMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === tempAssistantId
                     ? {
@@ -504,11 +584,13 @@ export default function App() {
                     : msg
                 )
               );
-              // Refresh conversation list to update titles and timestamps
-              fetchConversations(event.conversation_id || activeConversationId);
+              // In persistent mode, refresh conversation list to update titles and timestamps
+              if (!isTemporaryMode) {
+                fetchConversations(event.conversation_id || activeConversationId);
+              }
             } else if (event.type === 'error') {
               accumulatedAssistantText += `\n\n**Error:** ${event.error}`;
-              setMessages((prev) =>
+              updateTargetMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === tempAssistantId
                     ? {
@@ -522,7 +604,7 @@ export default function App() {
             }
           } catch (jsonErr) {
             accumulatedAssistantText += dataPayload;
-            setMessages((prev) =>
+            updateTargetMessages((prev) =>
               prev.map((msg) =>
                 msg.id === tempAssistantId
                   ? { ...msg, content: accumulatedAssistantText }
@@ -534,7 +616,7 @@ export default function App() {
         }
       }
 
-      setMessages((prev) =>
+      updateTargetMessages((prev) =>
         prev.map((msg) =>
           msg.id === tempAssistantId ? { ...msg, isStreaming: false } : msg
         )
@@ -545,7 +627,8 @@ export default function App() {
       } else {
         console.error('Streaming request failed:', err);
         const errMsg = `Failed to stream response from backend: ${err.message}`;
-        setMessages((prev) =>
+        const updateTargetMessages = isTemporaryMode ? setTemporaryMessages : setMessages;
+        updateTargetMessages((prev) =>
           prev.map((msg) =>
             msg.id === tempAssistantId
               ? {
@@ -593,6 +676,9 @@ export default function App() {
         conversations={conversations}
         groups={groups}
         activeConversationId={activeConversationId}
+        isTemporaryMode={isTemporaryMode}
+        onStartTemporaryChat={handleStartTemporaryChat}
+        onExitTemporaryChat={handleExitTemporaryChat}
         onSelectConversation={handleSelectConversation}
         onNewChat={handleNewChat}
         onRenameConversation={handleRenameConversation}
@@ -609,17 +695,16 @@ export default function App() {
         {/* Top Header */}
         <Header
           ollamaStatus={ollamaStatus}
-          availableModels={availableModels}
-          currentModel={currentModel}
-          setCurrentModel={setCurrentModel}
           onClearHistory={handleClearHistory}
           onRefreshStatus={fetchSystemStatus}
-          messageCount={messages.length}
+          messageCount={displayMessages.length}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={handleToggleSidebar}
           activeConversation={activeConversation}
+          isTemporaryMode={isTemporaryMode}
+          onExitTemporaryChat={handleExitTemporaryChat}
           onRenameActiveConversation={(newTitle) => {
-            if (activeConversationId) {
+            if (activeConversationId && !isTemporaryMode) {
               handleRenameConversation(activeConversationId, newTitle);
             }
           }}
@@ -632,25 +717,59 @@ export default function App() {
           className="flex-1 overflow-y-auto px-2 md:px-6 py-4 flex flex-col justify-start"
         >
           <div className="max-w-4xl mx-auto w-full flex-1 flex flex-col">
+            {/* Temporary Chat Notice Banner (when messages are present) */}
+            {isTemporaryMode && temporaryMessages.length > 0 && (
+              <div className="mb-4 px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-300 shadow-sm animate-in fade-in duration-200">
+                <div className="flex items-center gap-2.5">
+                  <Ghost className="w-4 h-4 text-amber-400 flex-shrink-0 animate-pulse" />
+                  <span>
+                    <strong>Temporary Chat:</strong> Messages in this conversation are not saved to SQLite history and will be discarded when you exit or refresh.
+                  </span>
+                </div>
+                <button
+                  onClick={handleExitTemporaryChat}
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-medium ml-3 flex-shrink-0 transition-colors"
+                >
+                  Exit
+                </button>
+              </div>
+            )}
+
             {/* Empty Conversation Welcome State */}
-            {messages.length === 0 && !loadingHistory && (
+            {displayMessages.length === 0 && !loadingHistory && (
               <div className="my-auto py-12 flex flex-col items-center text-center animate-in fade-in duration-300">
                 <div className="relative mb-6">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-2xl shadow-indigo-500/30 ring-1 ring-white/20">
-                    <Sparkles className="w-8 h-8" />
-                  </div>
-                  <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono">
-                    Offline
+                  {isTemporaryMode ? (
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-orange-600 flex items-center justify-center text-white shadow-2xl shadow-amber-500/30 ring-1 ring-white/20">
+                      <Ghost className="w-8 h-8" />
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-2xl shadow-indigo-500/30 ring-1 ring-white/20">
+                      <Sparkles className="w-8 h-8" />
+                    </div>
+                  )}
+                  <span
+                    className={`absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-md border text-[10px] font-mono ${
+                      isTemporaryMode
+                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                        : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    }`}
+                  >
+                    {isTemporaryMode ? 'Unsaved' : 'Offline'}
                   </span>
                 </div>
 
                 <h2 className="text-xl font-bold tracking-tight text-white mb-2">
-                  {activeConversation?.title && activeConversation.title !== 'New Chat'
+                  {isTemporaryMode
+                    ? 'Temporary Incognito Chat'
+                    : activeConversation?.title && activeConversation.title !== 'New Chat'
                     ? activeConversation.title
                     : 'Local-First Multimodal AI Interface'}
                 </h2>
                 <p className="text-zinc-400 text-sm max-w-md mb-8 leading-relaxed">
-                  Powered by FastAPI backend, persistent SQLite in WAL mode, and your local Ollama daemon (<span className="text-indigo-400 font-mono font-medium">{currentModel}</span>).
+                  {isTemporaryMode
+                    ? 'Messages in this session are kept purely in memory and are never written to your SQLite database or history files.'
+                    : `Powered by FastAPI backend, persistent SQLite in WAL mode, and your local Ollama daemon (${currentModel}).`}
                 </p>
 
                 {/* Starter Suggestion Chips */}
@@ -680,7 +799,7 @@ export default function App() {
             )}
 
             {/* Loading History Indicator */}
-            {loadingHistory && (
+            {loadingHistory && !isTemporaryMode && (
               <div className="my-auto py-12 flex flex-col items-center justify-center text-zinc-400 gap-3">
                 <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
                 <span className="text-xs font-medium">Hydrating conversation from SQLite...</span>
@@ -689,7 +808,7 @@ export default function App() {
 
             {/* Message List */}
             <div className="flex flex-col space-y-1">
-              {messages.map((message) => (
+              {displayMessages.map((message) => (
                 <ChatMessage key={message.id} message={message} />
               ))}
             </div>
@@ -710,7 +829,11 @@ export default function App() {
             setIsThinkingEnabled={setIsThinkingEnabled}
             onSend={() => handleSendMessage()}
             onStop={handleStopStreaming}
-            disabled={loadingHistory}
+            disabled={loadingHistory && !isTemporaryMode}
+            isTemporaryMode={isTemporaryMode}
+            availableModels={availableModels}
+            currentModel={currentModel}
+            setCurrentModel={setCurrentModel}
           />
         </footer>
       </div>

@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 
@@ -283,7 +284,9 @@ async def chat(
     conversation_id: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     model: Optional[str] = Form(None),
-    think: Optional[str] = Form("false")
+    think: Optional[str] = Form("false"),
+    is_temporary: Optional[str] = Form("false"),
+    context_messages: Optional[str] = Form(None)
 ):
     """
     Accepts multipart form data:
@@ -292,6 +295,8 @@ async def chat(
     - image: optional uploaded file
     - model: optional model name
     - think: optional thinking mode boolean string
+    - is_temporary: optional boolean string (if true, chat is not persisted to SQLite)
+    - context_messages: optional JSON string for temporary chat context
 
     Persists messages scoped to the conversation and streams tokens via SSE.
     """
@@ -302,6 +307,8 @@ async def chat(
     think_enabled = False
     if think:
         think_enabled = str(think).strip().lower() in ("true", "1", "yes", "on")
+
+    is_temp = str(is_temporary).strip().lower() in ("true", "1", "yes", "on")
 
     has_image = image is not None
     image_b64 = None
@@ -320,30 +327,52 @@ async def chat(
             logger.error(f"Failed to process attached image: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-    # Ensure conversation exists
-    active_conv_id = conversation_id.strip() if conversation_id and conversation_id.strip() else None
-    if not active_conv_id:
-        # Create a new conversation with title extracted from the prompt
-        title_summary = clean_prompt.replace("\n", " ")
-        if len(title_summary) > 36:
-            title_summary = title_summary[:33] + "..."
-        new_conv = await create_conversation(title=title_summary or "New Chat")
-        active_conv_id = new_conv["id"]
+    if is_temp:
+        active_conv_id = "temporary"
+        user_msg_id = f"temp-user-{uuid.uuid4().hex[:8]}"
+
+        # Parse context messages passed from frontend for temporary session
+        temp_context_list: List[Dict[str, Any]] = []
+        if context_messages:
+            try:
+                parsed = json.loads(context_messages)
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        if isinstance(item, dict) and item.get("content") and item.get("role"):
+                            temp_context_list.append({
+                                "role": item["role"],
+                                "content": item["content"]
+                            })
+            except Exception as e:
+                logger.warning(f"Failed to parse temporary context_messages: {e}")
+
+        # Lean context for CPU (last 6 messages = 3 turns)
+        context_payload = temp_context_list[-6:]
     else:
-        # Update existing conversation timestamp and update default title if appropriate
-        await touch_conversation(active_conv_id, auto_title=clean_prompt)
+        # Standard persistent SQLite DB path
+        active_conv_id = conversation_id.strip() if conversation_id and conversation_id.strip() else None
+        if not active_conv_id:
+            # Create a new conversation with title extracted from the prompt
+            title_summary = clean_prompt.replace("\n", " ")
+            if len(title_summary) > 36:
+                title_summary = title_summary[:33] + "..."
+            new_conv = await create_conversation(title=title_summary or "New Chat")
+            active_conv_id = new_conv["id"]
+        else:
+            # Update existing conversation timestamp and update default title if appropriate
+            await touch_conversation(active_conv_id, auto_title=clean_prompt)
 
-    # 1. Fetch recent conversation context scoped to active conversation
-    context_messages = await get_context_turns(conversation_id=active_conv_id, turn_count=3)
+        # 1. Fetch recent conversation context scoped to active conversation
+        context_payload = await get_context_turns(conversation_id=active_conv_id, turn_count=3)
 
-    # 2. Persist user message to SQLite with conversation_id
-    user_msg_id = await insert_message(
-        conversation_id=active_conv_id,
-        role="user",
-        content=clean_prompt,
-        has_image=has_image,
-        image_data=image_data_uri
-    )
+        # 2. Persist user message to SQLite with conversation_id
+        user_msg_id = await insert_message(
+            conversation_id=active_conv_id,
+            role="user",
+            content=clean_prompt,
+            has_image=has_image,
+            image_data=image_data_uri
+        )
 
     # 3. Construct current message with optional multimodal payload
     current_message = {
@@ -353,7 +382,7 @@ async def chat(
     if has_image and image_b64:
         current_message["images"] = [image_b64]
 
-    full_chat_payload = context_messages + [current_message]
+    full_chat_payload = context_payload + [current_message]
 
     # 4. Stream response generator
     async def sse_event_stream():
@@ -365,7 +394,8 @@ async def chat(
             "type": "init",
             "conversation_id": active_conv_id,
             "user_id": user_msg_id,
-            "has_image": has_image
+            "has_image": has_image,
+            "is_temporary": is_temp
         }
         yield f"data: {json.dumps(init_event)}\n\n"
 
@@ -374,6 +404,10 @@ async def chat(
         persisted_assistant_id = None
 
         async def persist_assistant_response(text: str, is_partial: bool = False):
+            if is_temp:
+                # Never persist temporary chats to SQLite database
+                return None
+
             nonlocal is_persisted, persisted_assistant_id
             clean_text = text.strip()
             if not is_persisted and clean_text:
@@ -447,8 +481,9 @@ async def chat(
         final_event = {
             "type": "done",
             "conversation_id": active_conv_id,
-            "assistant_id": persisted_assistant_id,
-            "full_content": assistant_full_text
+            "assistant_id": f"temp-asst-{uuid.uuid4().hex[:8]}" if is_temp else persisted_assistant_id,
+            "full_content": assistant_full_text,
+            "is_temporary": is_temp
         }
         yield f"data: {json.dumps(final_event)}\n\n"
         yield "data: [DONE]\n\n"

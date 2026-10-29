@@ -18,7 +18,8 @@ import {
   Check,
   X,
   Layers,
-  Database
+  Database,
+  Ghost
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -27,6 +28,9 @@ export default function Sidebar({
   conversations = [],
   groups = [],
   activeConversationId,
+  isTemporaryMode = false,
+  onStartTemporaryChat,
+  onExitTemporaryChat,
   onSelectConversation,
   onNewChat,
   onRenameConversation,
@@ -194,12 +198,28 @@ export default function Sidebar({
         {/* New Chat Icon Button */}
         <button
           onClick={() => onNewChat()}
-          className="w-10 h-10 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 flex items-center justify-center transition-all shadow-sm mb-4 group relative"
+          className="w-10 h-10 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 flex items-center justify-center transition-all shadow-sm mb-2.5 group relative"
           title="New Conversation"
         >
           <Plus className="w-5 h-5" />
           <span className="absolute left-14 ml-1 px-2 py-1 rounded-md bg-[#18181B] border border-white/10 text-xs text-white opacity-0 pointer-events-none group-hover:opacity-100 whitespace-nowrap z-50 shadow-lg">
             New Chat
+          </span>
+        </button>
+
+        {/* Temporary Chat Icon Button */}
+        <button
+          onClick={() => onStartTemporaryChat()}
+          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all shadow-sm mb-3 group relative border ${
+            isTemporaryMode
+              ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+              : 'bg-white/[0.03] hover:bg-white/[0.08] border-white/10 text-zinc-400 hover:text-amber-300 hover:border-amber-500/30'
+          }`}
+          title="Temporary Chat (Not saved to database)"
+        >
+          <Ghost className="w-5 h-5" />
+          <span className="absolute left-14 ml-1 px-2 py-1 rounded-md bg-[#18181B] border border-white/10 text-xs text-white opacity-0 pointer-events-none group-hover:opacity-100 whitespace-nowrap z-50 shadow-lg">
+            {isTemporaryMode ? 'Temporary Chat (Active)' : 'Temporary Chat'}
           </span>
         </button>
 
@@ -221,7 +241,7 @@ export default function Sidebar({
         {/* Mini conversation icons indicator */}
         <div className="flex-1 w-full overflow-y-auto flex flex-col items-center space-y-2 px-1">
           {conversations.slice(0, 8).map((conv) => {
-            const isActive = conv.id === activeConversationId;
+            const isActive = !isTemporaryMode && conv.id === activeConversationId;
             return (
               <button
                 key={conv.id}
@@ -299,19 +319,50 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* Primary New Chat Button (Styled like AI Assistant in reference) */}
-        <button
-          onClick={() => onNewChat()}
-          className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-600/15 via-indigo-600/10 to-transparent hover:from-indigo-600/25 hover:via-indigo-600/20 border border-indigo-500/20 hover:border-indigo-500/40 text-indigo-300 hover:text-indigo-200 text-xs font-medium transition-all group shadow-sm"
-        >
-          <div className="flex items-center gap-2">
+        {/* Primary Action Buttons: New Chat & Temporary Chat */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            onClick={() => onNewChat()}
+            className="flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600/15 via-indigo-600/10 to-transparent hover:from-indigo-600/25 hover:via-indigo-600/20 border border-indigo-500/20 hover:border-indigo-500/40 text-indigo-300 hover:text-indigo-200 text-xs font-medium transition-all group shadow-sm"
+            title="Start a new persistent conversation"
+          >
             <Sparkles className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
             <span>New Chat</span>
+          </button>
+
+          <button
+            onClick={() => onStartTemporaryChat()}
+            className={`flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl text-xs font-medium transition-all group shadow-sm border ${
+              isTemporaryMode
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-amber-500/10'
+                : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/10 text-zinc-400 hover:text-amber-300 hover:border-amber-500/30'
+            }`}
+            title="Start a temporary unsaved chat (not stored in database)"
+          >
+            <Ghost className={`w-3.5 h-3.5 ${isTemporaryMode ? 'text-amber-400 animate-pulse' : 'text-zinc-400 group-hover:text-amber-400'}`} />
+            <span>Temporary</span>
+          </button>
+        </div>
+
+        {/* Temporary Mode Status Banner in Sidebar */}
+        {isTemporaryMode && (
+          <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between text-xs text-amber-300 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="flex items-center gap-2 truncate">
+              <Ghost className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+              <div className="truncate">
+                <div className="font-semibold text-[11px] leading-tight">Temporary Mode Active</div>
+                <div className="text-[10px] text-amber-400/70 truncate">Messages not saved to DB</div>
+              </div>
+            </div>
+            <button
+              onClick={onExitTemporaryChat}
+              className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 transition-colors font-medium flex-shrink-0 ml-1"
+              title="Exit temporary chat"
+            >
+              Exit
+            </button>
           </div>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
-            +
-          </span>
-        </button>
+        )}
       </div>
 
       {/* Scrollable Conversation Tree & Workspaces */}
@@ -665,7 +716,7 @@ export default function Sidebar({
 
   // Render individual conversation row
   function renderConversationItem(conv, isNested = false) {
-    const isActive = conv.id === activeConversationId;
+    const isActive = !isTemporaryMode && conv.id === activeConversationId;
     const isEditing = editingConvId === conv.id;
     const isMenuOpen = activeMenuConvId === conv.id;
 
