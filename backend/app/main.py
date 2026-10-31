@@ -50,18 +50,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware: strictly allow local frontend origins to prevent malicious web pages
-# from making drive-by requests to localhost APIs.
+# CORS Middleware: allow all local development ports on localhost/127.0.0.1 (Vite, Next, React)
+# while strictly blocking external/public web domains from making drive-by requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

@@ -1,9 +1,42 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { User, Copy, Check, Image as ImageIcon, Sparkles, Maximize2, X } from 'lucide-react';
 import CodeBlock from './CodeBlock';
 import MermaidBlock from './MermaidBlock';
+
+// Pre-process LLM text so math renders reliably
+function preprocessLaTeX(content) {
+  if (!content) return '';
+
+  return (
+    content
+      // 1. Convert display brackets \[ ... \] to $$ ... $$
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `\n$$\n${math.trim()}\n$$\n`)
+      // 2. Convert inline brackets \( ... \) to $ ... $
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`)
+      // 3. Ensure $$ display blocks that share a line with text have surrounding newlines for block parsing
+      .replace(/([^\n])\s*\$\$([\s\S]*?)\$\$/g, '$1\n\n$$\n$2\n$$\n\n')
+      // 4. In math environments (cases, aligned, matrix, etc.), fix collapsed row break backslashes
+      .replace(/\\begin\{(cases|aligned|matrix|pmatrix|bmatrix)\}([\s\S]*?)\\end\{\1\}/g, (match, env, inner) => {
+        let fixedInner = inner
+          // Fix single \ before & (common in aligned)
+          .replace(/([^\\])\\\s*(&)/g, '$1\\\\\n$2')
+          // Fix single \ before newline
+          .replace(/([^\\])\\\s*(\r?\n)/g, '$1\\\\\n');
+
+        if (env === 'cases') {
+          // In cases, fix single \ followed by space and non-backslash that is followed by &
+          // e.g. "if x = 1 \ 1 - p &" -> "if x = 1 \\ 1 - p &"
+          fixedInner = fixedInner.replace(/([^\\])\\\s+([^\\&]+&)/g, '$1\\\\\n$2');
+        }
+
+        return `\\begin{${env}}${fixedInner}\\end{${env}}`;
+      })
+  );
+}
 
 // Auto-detect Mermaid diagrams whether declared as ```mermaid or via diagram syntax
 function isMermaidCode(lang, code) {
@@ -202,7 +235,16 @@ export default function ChatMessage({ message }) {
               <div className="whitespace-pre-wrap">{message.content}</div>
             ) : message.content ? (
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[
+                  [
+                    rehypeKatex,
+                    {
+                      output: 'htmlAndMathml',
+                      throwOnError: false,
+                    },
+                  ],
+                ]}
                 components={{
                   code({ node: _node, inline, className, children, ...props }) {
                     const match = /language-(\w+)/.exec(className || '');
@@ -235,7 +277,7 @@ export default function ChatMessage({ message }) {
                   }
                 }}
               >
-                {message.content}
+                {preprocessLaTeX(message.content)}
               </ReactMarkdown>
             ) : message.isStreaming ? (
               <span className="cursor-blink" />

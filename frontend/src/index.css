@@ -130,6 +130,19 @@
   font-size: 0.85em;
 }
 
+/* KaTeX Math Styling */
+.prose-custom .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5rem 0;
+  margin: 0.75rem 0;
+}
+
+.prose-custom .katex {
+  font-size: 1.05em;
+  text-rendering: auto;
+}
+
 /* Glassmorphism utility */
 .glass-panel {
   background: rgba(20, 20, 20, 0.75);
