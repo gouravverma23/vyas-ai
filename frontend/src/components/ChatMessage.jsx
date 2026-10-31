@@ -14,18 +14,25 @@ function preprocessLaTeX(content) {
   return (
     content
       // 1. Convert display brackets \[ ... \] to $$ ... $$
-      .replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `\n$$\n${math.trim()}\n$$\n`)
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `\n\n$$\n${math.trim()}\n$$\n\n`)
       // 2. Convert inline brackets \( ... \) to $ ... $
       .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`)
-      // 3. Ensure $$ display blocks that share a line with text have surrounding newlines for block parsing
-      .replace(/([^\n])\s*\$\$([\s\S]*?)\$\$/g, '$1\n\n$$\n$2\n$$\n\n')
+      // 3. Ensure $$ display blocks have proper line breaks around them.
+      // (Using function replacer so JavaScript does not treat "$$" in replacement strings as an escape for "$")
+      .replace(/([^\n]?)\s*\$\$([\s\S]*?)\$\$\s*([^\n]?)/g, (_, before, math, after) => {
+        const b = before && before !== '\n' ? `${before}\n\n` : (before || '');
+        const a = after && after !== '\n' ? `\n\n${after}` : (after || '');
+        return `${b}$$\n${math.trim()}\n$$${a}`;
+      })
       // 4. In math environments (cases, aligned, matrix, etc.), fix collapsed row break backslashes
       .replace(/\\begin\{(cases|aligned|matrix|pmatrix|bmatrix)\}([\s\S]*?)\\end\{\1\}/g, (match, env, inner) => {
         let fixedInner = inner
           // Fix single \ before & (common in aligned)
           .replace(/([^\\])\\\s*(&)/g, '$1\\\\\n$2')
           // Fix single \ before newline
-          .replace(/([^\\])\\\s*(\r?\n)/g, '$1\\\\\n');
+          .replace(/([^\\])\\\s*(\r?\n)/g, '$1\\\\\n')
+          // Clean up trailing single backslash before \end
+          .replace(/([^\\])\\\s*$/g, '$1');
 
         if (env === 'cases') {
           // In cases, fix single \ followed by space and non-backslash that is followed by &
@@ -240,7 +247,7 @@ export default function ChatMessage({ message }) {
                   [
                     rehypeKatex,
                     {
-                      output: 'htmlAndMathml',
+                      output: 'html',
                       throwOnError: false,
                     },
                   ],
