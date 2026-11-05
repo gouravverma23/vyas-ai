@@ -28,19 +28,27 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  onNewChat,
   onRenameConversation,
   onDeleteConversation,
   onCreateGroup,
   onRenameGroup,
   onDeleteGroup,
   onToggleGroup,
+  onToggleGroupExpand,
   onMoveConversationToGroup,
+  onMoveConversation,
   isOpen = true,
   onClose,
+  onToggleOpen,
   isTemporaryMode = false,
   onStartTemporaryChat,
   onExitTemporaryChat
 }) {
+  const handleNewChatAction = onNewConversation || onNewChat;
+  const handleToggleGroupAction = onToggleGroup || onToggleGroupExpand;
+  const handleMoveAction = onMoveConversationToGroup || onMoveConversation;
+  const handleCloseAction = onClose || onToggleOpen;
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [editingGroupId, setEditingGroupId] = useState(null);
@@ -147,7 +155,7 @@ export default function Sidebar({
 
   const handleMoveToGroup = (convId, targetGroupId, e) => {
     e.stopPropagation();
-    onMoveConversationToGroup(convId, targetGroupId);
+    handleMoveAction?.(convId, targetGroupId);
     setActiveMoveConvId(null);
     setActiveMenuConvId(null);
   };
@@ -225,7 +233,7 @@ export default function Sidebar({
             <button
               onClick={() => {
                 if (isTemporaryMode) onExitTemporaryChat?.();
-                onNewConversation();
+                handleNewChatAction?.();
               }}
               className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition-all shadow-md shadow-indigo-600/20 active:scale-95"
               title="Start a new persistent conversation"
@@ -357,7 +365,10 @@ export default function Sidebar({
                   </div>
                 ) : (
                   <div
-                    onClick={() => onToggleGroup(group.id, !isExpanded)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleGroupAction?.(group.id, !Boolean(isExpanded));
+                    }}
                     className="flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-white/[0.04] cursor-pointer text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">

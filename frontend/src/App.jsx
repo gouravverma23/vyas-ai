@@ -137,12 +137,15 @@ export default function App() {
         onExitTemporaryChat={handleExitTemporaryChat}
         onSelectConversation={onSelectConversationItem}
         onNewChat={onNewChatItem}
+        onNewConversation={onNewChatItem}
         onRenameConversation={handleRenameConversation}
         onDeleteConversation={handleDeleteConversation}
         onMoveConversation={handleMoveConversationToGroup}
+        onMoveConversationToGroup={handleMoveConversationToGroup}
         onCreateGroup={handleCreateGroup}
         onRenameGroup={handleRenameGroup}
         onDeleteGroup={handleDeleteGroup}
+        onToggleGroup={handleToggleGroup}
         onToggleGroupExpand={handleToggleGroup}
       />
 
