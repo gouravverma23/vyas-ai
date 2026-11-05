@@ -20,23 +20,34 @@ An offline-capable, local-first multimodal chat interface powered by **Ollama**,
 LocalAIInterface/
 ├── backend/
 │   ├── app/
-│   │   ├── database.py       # Async SQLite database setup and queries (WAL mode)
-│   │   ├── main.py           # FastAPI routes (/chat, /history, /models, /health)
-│   │   └── ollama_client.py  # Ollama API client & SSE streaming generator
-│   ├── chat.db               # SQLite database file (created automatically)
+│   │   ├── api/              # Domain-driven FastAPI routers (chat, conversations, groups, system)
+│   │   ├── core/             # Configuration & async SQLite connection manager (WAL mode)
+│   │   ├── models/           # Pydantic validation schemas (conversation, group)
+│   │   ├── repositories/     # Data access layer (conversation_repo, group_repo, message_repo)
+│   │   ├── services/         # Ollama streaming client, model caching, and health services
+│   │   ├── database.py       # Backwards-compatible database re-export shim
+│   │   ├── ollama_client.py  # Backwards-compatible client re-export shim
+│   │   └── main.py           # Application factory mounting routers and CORS middleware
+│   ├── chat.db               # SQLite database file (WAL mode)
 │   ├── requirements.txt      # Python dependencies
 │   └── run.py                # Server entry point (Uvicorn runner)
 ├── frontend/
 │   ├── src/
-│   │   ├── components/       # Header, ChatMessage, ChatInput, CodeBlock
-│   │   ├── App.jsx           # Main chat orchestration & state management
+│   │   ├── api/              # Centralized API service layer (client, chat, conversations, groups, system)
+│   │   ├── components/
+│   │   │   ├── chat/         # Chat-specific UI (ChatMessage, ChatInput)
+│   │   │   ├── common/       # Reusable components (CodeBlock with Prism, MermaidBlock with zoom/export)
+│   │   │   └── layout/       # Shell layout (Header with status, Sidebar with collapsible groups)
+│   │   ├── hooks/            # Custom React hooks (useConversations, useChat)
+│   │   ├── utils/            # Shared utilities (markdown LaTeX preprocessor, formatters)
+│   │   ├── App.jsx           # Clean application root orchestrator (~240 lines)
 │   │   ├── index.css         # Tailwind & custom styling
 │   │   └── main.jsx          # React DOM entry point
 │   ├── package.json          # Node dependencies & scripts
 │   ├── tailwind.config.js    # Tailwind CSS configuration
 │   └── vite.config.js        # Vite dev server configuration & API proxy
 ├── .vscode/
-│   └── settings.json         # Editor settings (suppresses @tailwind CSS warnings)
+│   └── settings.json         # Editor settings
 └── README.md
 ```
 
